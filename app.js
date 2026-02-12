@@ -3,6 +3,8 @@ import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import pg from "pg";
 import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+import { verifyToken } from "./middleware/auth.js";
 
 const app = express();
 const port = 3000;
@@ -269,13 +271,29 @@ app.post("/api/staff/login", async (req, res) => {
     }
 
     // Successful login
-    res.json({
-      message: "Login successful",
-      staff_id: staff.staff_id,
-      hotel_id: staff.hotel_id,
-      staff_name: staff.name,
-      role: staff.role
-    });
+    // res.json({
+    //   message: "Login successful",
+    //   staff_id: staff.staff_id,
+    //   hotel_id: staff.hotel_id,
+    //   staff_name: staff.name,
+    //   role: staff.role
+    // });
+
+    const token = jwt.sign(
+  {
+    staff_id: staff.staff_id,
+    hotel_id: staff.hotel_id,
+    role: staff.role
+  },
+  process.env.JWT_SECRET,
+  { expiresIn: "1d" }
+);
+
+res.json({
+  message: "Login successful",
+  token
+});
+
 
   } catch (err) {
     console.error(err);
@@ -406,6 +424,292 @@ app.patch("/api/rooms/:room_id", async (req, res) => {
 });
 
 
+app.get("/api/staff/bookings", verifyToken , async (req, res) => {
+  const  hotel_id  = req.user.hotel_id;
+
+  if (!hotel_id) {
+    return res.status(400).json({ message: "hotel_id is required" });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT b.booking_id, b.guest_name, b.guest_phone,
+              b.check_in_date, b.check_out_date, b.booking_status,
+              r.room_type, r.price_per_night
+       FROM bookings b
+       JOIN rooms r ON b.room_id = r.room_id
+       WHERE b.hotel_id = $1
+       ORDER BY b.created_at DESC`,
+      [hotel_id]
+    );
+    
+
+    // decreasing available rooms when boooked
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+// app.get("/api/staff/analytics", async (req, res) => {
+//   const { hotel_id } = req.query;
+
+//   if (!hotel_id) {
+//     return res.status(400).json({ message: "hotel_id is required" });
+//   }
+
+//   try {
+//     const totalBookings = await db.query(
+//       `SELECT COUNT(*) FROM bookings WHERE hotel_id = $1`,
+//       [hotel_id]
+//     );
+
+//     const revenue = await db.query(
+//       `SELECT SUM(r.price_per_night) AS revenue
+//        FROM bookings b
+//        JOIN rooms r ON b.room_id = r.room_id
+//        WHERE b.hotel_id = $1`,
+//       [hotel_id]
+//     );
+
+//     const popularRoom = await db.query(
+//       `SELECT r.room_type, COUNT(*) AS count
+//        FROM bookings b
+//        JOIN rooms r ON b.room_id = r.room_id
+//        WHERE b.hotel_id = $1
+//        GROUP BY r.room_type
+//        ORDER BY count DESC
+//        LIMIT 1`,
+//       [hotel_id]
+//     );
+
+//     res.json({
+//       total_bookings: totalBookings.rows[0].count,
+//       total_revenue: revenue.rows[0].revenue || 0,
+//       most_popular_room: popularRoom.rows[0] || null
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+
+app.get("/api/staff/analytics", verifyToken,async (req, res) => {
+  const  hotel_id  = req.user.hotel_id;
+
+  if (!hotel_id) {
+    return res.status(400).json({ message: "hotel_id is required" });
+  }
+
+  try {
+    // 1️⃣ Confirmed bookings count
+    const confirmedBookings = await db.query(
+      `SELECT COUNT(*) 
+       FROM bookings 
+       WHERE hotel_id = $1 AND booking_status = 'confirmed'`,
+      [hotel_id]
+    );
+
+    // 2️⃣ Cancelled bookings count
+    const cancelledBookings = await db.query(
+      `SELECT COUNT(*) 
+       FROM bookings 
+       WHERE hotel_id = $1 AND booking_status = 'cancelled'`,
+      [hotel_id]
+    );
+
+    // 3️⃣ Revenue (confirmed bookings only)
+    const revenue = await db.query(
+      `SELECT COALESCE(SUM(r.price_per_night), 0) AS revenue
+       FROM bookings b
+       JOIN rooms r ON b.room_id = r.room_id
+       WHERE b.hotel_id = $1
+         AND b.booking_status = 'confirmed'`,
+      [hotel_id]
+    );
+
+    // 4️⃣ Most popular room (confirmed only)
+    const popularRoom = await db.query(
+      `SELECT r.room_type, COUNT(*) AS count
+       FROM bookings b
+       JOIN rooms r ON b.room_id = r.room_id
+       WHERE b.hotel_id = $1
+         AND b.booking_status = 'confirmed'
+       GROUP BY r.room_type
+       ORDER BY count DESC
+       LIMIT 1`,
+      [hotel_id]
+    );
+
+    res.json({
+      confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
+      cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
+      total_revenue: revenue.rows[0].revenue,
+      most_popular_room: popularRoom.rows[0] || null
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.post("/api/guest/query", async (req, res) => {
+  const { hotel_id, query_text } = req.body;
+
+  if (!hotel_id || !query_text) {
+    return res.status(400).json({
+      message: "hotel_id and query_text are required"
+    });
+  }
+
+  try {
+    // 1️⃣ Simple intent detection (rule-based for now)
+    let intent = "general";
+    let response = "Thank you for your query. Our staff will assist you shortly.";
+
+    const lowerQuery = query_text.toLowerCase();
+
+    if (lowerQuery.includes("room") || lowerQuery.includes("available")) {
+      intent = "availability";
+      response = "Yes, we have rooms available. Would you like to book one?";
+    } else if (lowerQuery.includes("price") || lowerQuery.includes("cost")) {
+      intent = "pricing";
+      response = "Room prices depend on the room type. Please let me know which room you prefer.";
+    } else if (lowerQuery.includes("book")) {
+      intent = "booking";
+      response = "Sure! Please tell me the room type and date.";
+    }
+
+    // 2️⃣ Store query & response
+    await db.query(
+      `INSERT INTO guest_queries
+       (hotel_id, query_text, intent_detected, response_text)
+       VALUES ($1, $2, $3, $4)`,
+      [hotel_id, query_text, intent, response]
+    );
+
+    // 3️⃣ Send response to guest
+    res.json({
+      reply: response
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+
+app.get("/api/staff/queries/summary", verifyToken,async (req, res) => {
+  const  hotel_id  = req.user.hotel_id;
+
+  if (!hotel_id) {
+    return res.status(400).json({ message: "hotel_id is required" });
+  }
+
+  try {
+    const totalQueries = await db.query(
+      `SELECT COUNT(*) FROM guest_queries WHERE hotel_id = $1`,
+      [hotel_id]
+    );
+
+    const topIntents = await db.query(
+      `SELECT intent_detected, COUNT(*) AS count
+       FROM guest_queries
+       WHERE hotel_id = $1
+       GROUP BY intent_detected
+       ORDER BY count DESC`,
+      [hotel_id]
+    );
+
+    const commonQuestions = await db.query(
+      `SELECT query_text, COUNT(*) AS count
+       FROM guest_queries
+       WHERE hotel_id = $1
+       GROUP BY query_text
+       ORDER BY count DESC
+       LIMIT 5`,
+      [hotel_id]
+    );
+
+    res.json({
+      total_queries: totalQueries.rows[0].count,
+      intent_breakdown: topIntents.rows,
+      common_questions: commonQuestions.rows
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.patch("/api/bookings/:booking_id/cancel", async (req, res) => {
+  const { booking_id } = req.params;
+
+  try {
+    // Fetch booking details
+    const bookingResult = await db.query(
+      `SELECT room_id, booking_status
+       FROM bookings
+       WHERE booking_id = $1`,
+      [booking_id]
+    );
+
+    if (bookingResult.rows.length === 0) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const booking = bookingResult.rows[0];
+
+    // if (booking.bookingstatus === "checked_in") {
+    //   return res.status(400).json({ message: "Cannot cancel checked-in booking" });
+    // }
+
+
+// changed status to booking_status
+
+    if (booking.booking_status === "cancelled") {
+      return res.status(400).json({ message: "Booking already cancelled" });
+    }
+
+    // Start transaction
+    await db.query("BEGIN");
+
+    // Update booking status
+    await db.query(
+      `UPDATE bookings
+       SET booking_status = 'cancelled'
+       WHERE booking_id = $1`,
+      [booking_id]
+    );
+
+    // Increase available rooms
+    await db.query(
+      `UPDATE rooms
+       SET available_rooms = available_rooms + 1
+       WHERE room_id = $1`,
+      [booking.room_id]
+    );
+
+    await db.query("COMMIT");
+
+    res.json({ message: "Booking cancelled successfully" });
+
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
