@@ -1,5 +1,6 @@
 import express from "express";
 import bodyParser from "body-parser";
+import cors from "cors";
 import dotenv from "dotenv";
 import pg from "pg";
 import bcrypt from "bcrypt";
@@ -19,7 +20,14 @@ const db = new pg.Client({
   port: process.env.DB_PORT
 });
 
-db.connect();
+db.connect()
+  .then(() => console.log("✓ Database connected successfully"))
+  .catch((err) => console.error("✗ Database connection failed:", err.message));
+
+app.use(cors({
+  origin: 'http://localhost:5173',
+  credentials: true
+}));
 
 app.use(express.json());
 
@@ -172,6 +180,7 @@ app.get("/api/hotels/search", async (req, res) => {
   }
 
   try {
+    console.log(`🔍 Searching for: "${searchQuery}"`);
     const result = await db.query(
       `SELECT hotel_id, hotel_name, location, slug
        FROM hotels
@@ -180,14 +189,16 @@ app.get("/api/hotels/search", async (req, res) => {
       [`%${searchQuery}%`]
     );
 
+    console.log(`✓ Found ${result.rows.length} hotels`);
     res.json({
       results: result.rows
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("✗ Search error:", err.message);
     res.status(500).json({
-      message: "Server error"
+      message: "Server error",
+      error: err.message
     });
   }
 });
