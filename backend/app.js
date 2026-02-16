@@ -322,8 +322,8 @@ res.json({
 
 
 
-app.get("/api/rooms", async (req, res) => {
-  const { hotel_id } = req.query;
+app.get("/api/rooms", verifyToken, async (req, res) => {
+  const hotel_id = req.user.hotel_id;
 
   if (!hotel_id) {
     return res.status(400).json({ message: "hotel_id is required" });
@@ -331,7 +331,7 @@ app.get("/api/rooms", async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT room_id, room_type, price_per_night, available_rooms
+      `SELECT room_id, room_type, price_per_night, available_rooms, total_rooms
        FROM rooms
        WHERE hotel_id = $1`,
       [hotel_id]
@@ -346,9 +346,9 @@ app.get("/api/rooms", async (req, res) => {
 });
 
 
-app.post("/api/rooms", async (req, res) => {
+app.post("/api/rooms", verifyToken, async (req, res) => {
+  const hotel_id = req.user.hotel_id;
   const {
-    hotel_id,
     room_type,
     price_per_night,
     total_rooms,
@@ -471,49 +471,6 @@ app.get("/api/staff/bookings", verifyToken , async (req, res) => {
 });
 
 
-// app.get("/api/staff/analytics", async (req, res) => {
-//   const { hotel_id } = req.query;
-
-//   if (!hotel_id) {
-//     return res.status(400).json({ message: "hotel_id is required" });
-//   }
-
-//   try {
-//     const totalBookings = await db.query(
-//       `SELECT COUNT(*) FROM bookings WHERE hotel_id = $1`,
-//       [hotel_id]
-//     );
-
-//     const revenue = await db.query(
-//       `SELECT SUM(r.price_per_night) AS revenue
-//        FROM bookings b
-//        JOIN rooms r ON b.room_id = r.room_id
-//        WHERE b.hotel_id = $1`,
-//       [hotel_id]
-//     );
-
-//     const popularRoom = await db.query(
-//       `SELECT r.room_type, COUNT(*) AS count
-//        FROM bookings b
-//        JOIN rooms r ON b.room_id = r.room_id
-//        WHERE b.hotel_id = $1
-//        GROUP BY r.room_type
-//        ORDER BY count DESC
-//        LIMIT 1`,
-//       [hotel_id]
-//     );
-
-//     res.json({
-//       total_bookings: totalBookings.rows[0].count,
-//       total_revenue: revenue.rows[0].revenue || 0,
-//       most_popular_room: popularRoom.rows[0] || null
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// });
 
 
 app.get("/api/staff/analytics", verifyToken,async (req, res) => {
@@ -576,8 +533,56 @@ app.get("/api/staff/analytics", verifyToken,async (req, res) => {
   }
 });
 
+// app.post("/api/guest/query", async (req, res) => {
+//   const { hotel_id, query_text } = req.body;
+
+//   if (!hotel_id || !query_text) {
+//     return res.status(400).json({
+//       message: "hotel_id and query_text are required"
+//     });
+//   }
+
+//   try {
+//     // 1️⃣ Simple intent detection (rule-based for now)
+//     let intent = "general";
+//     let response = "Thank you for your query. Our staff will assist you shortly.";
+
+//     const lowerQuery = query_text.toLowerCase();
+
+//     if (lowerQuery.includes("room") || lowerQuery.includes("available")) {
+//       intent = "availability";
+//       response = "Yes, we have rooms available. Would you like to book one?";
+//     } else if (lowerQuery.includes("price") || lowerQuery.includes("cost")) {
+//       intent = "pricing";
+//       response = "Room prices depend on the room type. Please let me know which room you prefer.";
+//     } else if (lowerQuery.includes("book")) {
+//       intent = "booking";
+//       response = "Sure! Please tell me the room type and date.";
+//     }
+
+//     // 2️⃣ Store query & response
+//     await db.query(
+//       `INSERT INTO guest_queries
+//        (hotel_id, query_text, intent_detected, response_text)
+//        VALUES ($1, $2, $3, $4)`,
+//       [hotel_id, query_text, intent, response]
+//     );
+
+//     // 3️⃣ Send response to guest
+//     res.json({
+//       reply: response
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({
+//       message: "Server error"
+//     });
+//   }
+// });
 app.post("/api/guest/query", async (req, res) => {
-  const { hotel_id, query_text } = req.body;
+  // 1. Get inputs (including 'history' for conversation context)
+  const { hotel_id, query_text, history, bookingDetails } = req.body;
 
   if (!hotel_id || !query_text) {
     return res.status(400).json({
@@ -586,84 +591,194 @@ app.post("/api/guest/query", async (req, res) => {
   }
 
   try {
-    // 1️⃣ Simple intent detection (rule-based for now)
-    let intent = "general";
-    let response = "Thank you for your query. Our staff will assist you shortly.";
+    // 2. Fetch REAL Hotel Data from DB
+    // We need to give the AI the current prices and availability
+    const hotelResult = await db.query(
+      `SELECT hotel_id, hotel_name, location FROM hotels WHERE hotel_id = $1`,
+      [hotel_id]
+    );
 
-    const lowerQuery = query_text.toLowerCase();
-
-    if (lowerQuery.includes("room") || lowerQuery.includes("available")) {
-      intent = "availability";
-      response = "Yes, we have rooms available. Would you like to book one?";
-    } else if (lowerQuery.includes("price") || lowerQuery.includes("cost")) {
-      intent = "pricing";
-      response = "Room prices depend on the room type. Please let me know which room you prefer.";
-    } else if (lowerQuery.includes("book")) {
-      intent = "booking";
-      response = "Sure! Please tell me the room type and date.";
+    if (hotelResult.rows.length === 0) {
+      return res.status(404).json({ message: "Hotel not found" });
     }
 
-    // 2️⃣ Store query & response
+    const roomsResult = await db.query(
+      `SELECT room_id, room_type as type, price_per_night as price, available_rooms as available 
+       FROM rooms 
+       WHERE hotel_id = $1`,
+      [hotel_id]
+    );
+
+    // 3. Build the Context Object
+    const hotelContext = {
+      hotel_id: hotel_id,
+      hotel_name: hotelResult.rows[0].hotel_name,
+      location: hotelResult.rows[0].location,
+      rooms: roomsResult.rows || []
+    };
+
+    // 4. Call the AI Service
+    // We pass 'db' so the AI can run bookings if needed
+    const aiResult = await processGuestQuery(query_text, hotelContext, db, history);
+
+    // 5. Try to auto-complete booking if we have all details
+    let bookingResponse = null;
+    
+    // Check if AI result has booking details (from initial room/date selection)
+    let finalBookingDetails = bookingDetails || aiResult.bookingDetails;
+    
+    // Also check if AI result has guest details (from name/phone confirmation)
+    if (aiResult.guestDetails && finalBookingDetails) {
+      const { name: guestName, phone } = aiResult.guestDetails;
+      const roomRecord = hotelContext.rooms.find(r => r.type.toLowerCase() === finalBookingDetails.room_type.toLowerCase());
+      
+      console.log("🔍 Booking Auto-Complete Check:");
+      console.log(`  Guest: ${guestName}, Phone: ${phone}`);
+      console.log(`  Booking Details:`, finalBookingDetails);
+      console.log(`  Looking for room type: ${finalBookingDetails.room_type}`);
+      console.log(`  Available rooms:`, hotelContext.rooms.map(r => ({ type: r.type, available: r.available })));
+      console.log(`  Found room: ${roomRecord ? roomRecord.type : "NOT FOUND"}`);
+      
+      if (roomRecord && roomRecord.available > 0) {
+        try {
+          // Parse check-in date (handle DD-MM-YYYY format)
+          let checkInStr = finalBookingDetails.check_in_date;
+          if (checkInStr.includes('-') && checkInStr.split('-')[2].length === 4) {
+            // Convert DD-MM-YYYY to YYYY-MM-DD
+            const [day, month, year] = checkInStr.split('-');
+            checkInStr = `${year}-${month}-${day}`;
+          }
+          const checkInDate = new Date(checkInStr);
+          const nightsNum = parseInt(finalBookingDetails.nights) || 1;
+          const checkOutDate = new Date(checkInDate.getTime() + nightsNum * 24 * 60 * 60 * 1000);
+          const checkOutStr = checkOutDate.toISOString().split('T')[0];
+
+          // Create the booking
+          await db.query(
+            `INSERT INTO bookings
+             (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, booking_status)
+             VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')`,
+            [
+              hotel_id,
+              roomRecord.room_id,
+              guestName,
+              phone,
+              checkInStr,
+              checkOutStr
+            ]
+          );
+
+          // Decrease available rooms
+          await db.query(
+            "UPDATE rooms SET available_rooms = available_rooms - 1 WHERE room_id = $1",
+            [roomRecord.room_id]
+          );
+
+          console.log(`✅ Booking created successfully for ${guestName} in room ${finalBookingDetails.room_type}`);
+
+          bookingResponse = {
+            intent: "booking_confirmed",
+            response: `✅ Booking confirmed!\n• Guest: ${guestName}\n• Room: ${finalBookingDetails.room_type}\n• Check-in: ${finalBookingDetails.check_in_date}\n• Nights: ${finalBookingDetails.nights}\n• Phone: ${phone}\n\nThank you for booking with us!`,
+            booking_created: true
+          };
+        } catch (bookingErr) {
+          console.error("Booking creation error:", bookingErr);
+          // Fall through to regular AI response
+        }
+      }
+    }
+    
+    // Fallback: try to extract guest info from query for manual booking creation
+    if (!bookingResponse && finalBookingDetails) {
+      const phonePattern = /(\d{10}|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})/;
+      const phoneMatch = query_text.match(phonePattern);
+      
+      // Try to extract name (anything before phone or comma)
+      let guestName = null;
+      const nameMatch = query_text.match(/^([^,\d]+)/);
+      if (nameMatch) {
+        guestName = nameMatch[1].trim();
+      }
+
+      // If we have name, phone, and room details, create the booking
+      if (guestName && phoneMatch) {
+        const phone = phoneMatch[0];
+        const roomRecord = hotelContext.rooms.find(r => r.type.toLowerCase() === finalBookingDetails.room_type.toLowerCase());
+        
+        if (roomRecord && roomRecord.available > 0) {
+          try {
+            // Parse check-in date (handle DD-MM-YYYY format)
+            let checkInStr = finalBookingDetails.check_in_date;
+            if (checkInStr.includes('-') && checkInStr.split('-')[2].length === 4) {
+              // Convert DD-MM-YYYY to YYYY-MM-DD
+              const [day, month, year] = checkInStr.split('-');
+              checkInStr = `${year}-${month}-${day}`;
+            }
+            const checkInDate = new Date(checkInStr);
+            const nightsNum = parseInt(finalBookingDetails.nights) || 1;
+            const checkOutDate = new Date(checkInDate.getTime() + nightsNum * 24 * 60 * 60 * 1000);
+            const checkOutStr = checkOutDate.toISOString().split('T')[0];
+
+            // Create the booking
+            await db.query(
+              `INSERT INTO bookings
+               (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, booking_status)
+               VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')`,
+              [
+                hotel_id,
+                roomRecord.room_id,
+                guestName,
+                phone,
+                checkInStr,
+                checkOutStr
+              ]
+            );
+
+            // Decrease available rooms
+            await db.query(
+              "UPDATE rooms SET available_rooms = available_rooms - 1 WHERE room_id = $1",
+              [roomRecord.room_id]
+            );
+
+            bookingResponse = {
+              intent: "booking_confirmed",
+              response: `✅ Booking confirmed!\n• Guest: ${guestName}\n• Room: ${finalBookingDetails.room_type}\n• Check-in: ${finalBookingDetails.check_in_date}\n• Nights: ${finalBookingDetails.nights}\n• Phone: ${phone}\n\nThank you for booking with us!`,
+              booking_created: true
+            };
+          } catch (bookingErr) {
+            console.error("Booking creation error:", bookingErr);
+            // Fall through to regular AI response
+          }
+        }
+      }
+    }
+
+    // 6. Store the Interaction in DB
     await db.query(
       `INSERT INTO guest_queries
        (hotel_id, query_text, intent_detected, response_text)
        VALUES ($1, $2, $3, $4)`,
-      [hotel_id, query_text, intent, response]
+      [hotel_id, query_text, aiResult.intent, aiResult.response]
     );
 
-    // 3️⃣ Send response to guest
+    // 7. Send Response to Frontend
     res.json({
-      reply: response
+      reply: bookingResponse?.response || aiResult.response,
+      response: bookingResponse?.response || aiResult.response,
+      intent: bookingResponse?.intent || aiResult.intent,
+      bookingDetails: aiResult.bookingDetails || null,
+      guestDetails: aiResult.guestDetails || null,
+      booking_created: bookingResponse?.booking_created || false
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("API Error:", err);
     res.status(500).json({
-      message: "Server error"
+      message: "Server error processing AI request"
     });
   }
 });
 
-// app.post("/api/guest/query", async (req, res) => {
-
-//   const { hotel_id, query_text } = req.body;
-
-//   if (!hotel_id || !query_text) {
-//     return res.status(400).json({
-//       message: "hotel_id and query_text required"
-//     });
-//   }
-
-//   try {
-
-//     const aiResult = await processGuestQuery(query_text);
-
-//     const intent = aiResult.intent;
-//     const response = aiResult.response;
-
-//     await db.query(
-//       `INSERT INTO guest_queries
-//        (hotel_id, query_text, intent_detected, response_text)
-//        VALUES ($1, $2, $3, $4)`,
-//       [hotel_id, query_text, intent, response]
-//     );
-
-//     res.json({
-//       reply: response,
-//       intent: intent
-//     });
-
-//   } catch (err) {
-
-//     console.error(err);
-
-//     res.status(500).json({
-//       message: "AI processing failed"
-//     });
-
-//   }
-
-// });
 
 app.get("/api/staff/queries/summary", verifyToken,async (req, res) => {
   const  hotel_id  = req.user.hotel_id;

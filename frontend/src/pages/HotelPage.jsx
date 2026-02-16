@@ -14,6 +14,9 @@ const [input, setInput] = useState("");
 
   const [guestName, setGuestName] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
+  
+  // Track booking details during conversation
+  const [bookingDetails, setBookingDetails] = useState(null);
 
   useEffect(() => {
     fetchHotel();
@@ -57,23 +60,68 @@ const [input, setInput] = useState("");
   setMessages([...messages, userMessage]);
 
   try {
+    const requestBody = {
+      hotel_id: hotel.hotel_id,
+      query_text: input,
+      // Send hotel context with room details so backend can create bookings
+      hotelContext: {
+        hotel_name: hotel.hotel_name,
+        hotel_id: hotel.hotel_id,
+        location: hotel.location,
+        rooms: rooms.map(room => ({
+          room_id: room.room_id,
+          type: room.room_type,
+          price: room.price_per_night,
+          available: room.available_rooms,
+          total: room.total_rooms
+        }))
+      }
+    };
+    
+    // Include booking details if we have them
+    if (bookingDetails) {
+      requestBody.bookingDetails = bookingDetails;
+    }
+    
     const res = await axios.post(
       "http://localhost:3000/api/guest/query",
-      {
-        hotel_id: hotel.hotel_id,
-        query_text: input
-      }
+      requestBody
     );
 
+    // The response has: intent, response, bookingDetails?, guestDetails?, booking_created?
+    const aiResponse = res.data;
+    
     const aiMessage = {
       sender: "ai",
-      text: res.data.reply
+      text: aiResponse.response || aiResponse.reply || "I couldn't generate a response.",
+      intent: aiResponse.intent,
+      bookingDetails: aiResponse.bookingDetails,
+      guestDetails: aiResponse.guestDetails,
+      booking_created: aiResponse.booking_created
     };
 
     setMessages(prev => [...prev, aiMessage]);
 
+    // If we got booking details, save them for next message
+    if (aiResponse.bookingDetails) {
+      setBookingDetails(aiResponse.bookingDetails);
+    }
+    
+    // If booking was just created, show confirmation and reset
+    if (aiResponse.booking_created) {
+      alert("✅ Booking confirmed! Thank you for choosing our hotel.");
+      setBookingDetails(null);
+      setMessages([]); // Clear chat
+      setInput("");
+      fetchHotel(); // Refresh room availability
+    }
+
   } catch (err) {
     console.error(err);
+    setMessages(prev => [...prev, {
+      sender: "ai",
+      text: "Sorry, I encountered an error. Please try again."
+    }]);
   }
 
   setInput("");

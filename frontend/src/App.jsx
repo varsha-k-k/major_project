@@ -5,6 +5,8 @@ import StaffDashboard from "./pages/StaffDashboard";
 import HotelSearch from "./pages/HotelSearch";
 import HotelPage from "./pages/HotelPage";
 import HotelRegister from "./pages/HotelRegister";
+import RoomManagement from "./pages/RoomManagement";
+
 
 function App() {
   return (
@@ -14,6 +16,7 @@ function App() {
       <Route path="/register-hotel" element = {<HotelRegister />} />
       <Route path="/staff-login" element={<StaffLogin />} />
       <Route path="/dashboard" element={<StaffDashboard />} />
+      <Route path="/rooms" element={<RoomManagement />} />
     </Routes>
   );
 }

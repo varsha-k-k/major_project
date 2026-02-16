@@ -1,12 +1,13 @@
-import OpenAI from "openai";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-// Simple in-memory cache to avoid repeat calls for identical queries
+// HuggingFace Inference API Configuration
+const HF_API_TOKEN = process.env.HUGGINGFACE_API_TOKEN;
+const HF_MODEL = process.env.HF_MODEL || "mistralai/Mistral-7B-Instruct-v0.1";
+const HF_API_URL = `https://router.huggingface.co/api/${HF_MODEL}`;
+
+// --- CACHE UTILITIES ---
 const cache = new Map();
 
 function setCache(key, value, ttlMs = 1000 * 60 * 5) {
@@ -28,98 +29,211 @@ function sleep(ms) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-export async function processGuestQuery(query) {
-  const normalized = (query || "").trim().toLowerCase();
+// --- RULE-BASED RESPONSES (no API needed) ---
+function getRuleBasedResponse(query, hotelContext) {
+  const normalized = query.trim().toLowerCase();
 
-  // 1) Fast rule-based replies to cut API usage
-  if (normalized.includes("room") || normalized.includes("available")) {
-    return { intent: "availability", response: "Yes, we have rooms available. Would you like to book one?" };
-  }
-  if (normalized.includes("price") || normalized.includes("cost")) {
-    return { intent: "pricing", response: "Room prices depend on the room type. Please tell me which room you prefer." };
-  }
-  if (normalized.includes("book")) {
-    return { intent: "booking", response: "Sure — please tell me the room type and dates you'd like to book." };
-  }
+  // ✅ BOOKING WITH DETAILS (highest priority)
+  // Pattern: "DELUXE 17-02-2026 2 NIGHTS" or "book deluxe room for 17-02-2026 2 nights"
+  if (hotelContext && hotelContext.rooms) {
+    // Try to extract booking details
+    const datePattern = /(\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/;
+    const nightsPattern = /(\d+)\s*nights?/i;
+    const dateMatch = query.match(datePattern);
+    const nightsMatch = query.match(nightsPattern);
 
-  // 2) Check cache
-  const cacheKey = `guestq:${normalized}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
-
-  // 3) Prepare prompt
-  const prompt = `You are a hotel assistant. Classify the user intent and respond naturally. ` +
-    `Possible intents: availability, pricing, booking, cancellation, general. ` +
-    `User query: "${query}" ` +
-    `Return JSON like: { "intent": "...", "response": "..." }`;
-
-  // 4) Model routing: prefer cheaper model; allow override with PREMIUM_AI_MODEL env var
-  const cheapModel = process.env.AI_CHEAP_MODEL || "gpt-3.5-turbo";
-  const premiumModel = process.env.AI_PREMIUM_MODEL || "gpt-4o-mini";
-  const usePremium = process.env.USE_PREMIUM_AI === "true";
-  const modelToUse = usePremium ? premiumModel : cheapModel;
-
-  const maxRetries = 2;
-  let attempt = 0;
-
-  while (attempt <= maxRetries) {
-    try {
-      const completion = await openai.chat.completions.create({
-        model: modelToUse,
-        messages: [
-          { role: "system", content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 200
-      });
-
-      const text = completion?.choices?.[0]?.message?.content ?? "";
-
-      try {
-        const parsed = JSON.parse(text);
-        setCache(cacheKey, parsed);
-        return parsed;
-      } catch (e) {
-        const fallback = { intent: "general", response: text };
-        setCache(cacheKey, fallback);
-        return fallback;
+    // Find room type mentioned
+    let roomType = null;
+    for (const room of hotelContext.rooms) {
+      if (normalized.includes(room.type.toLowerCase())) {
+        roomType = room.type;
+        break;
       }
+    }
 
-    } catch (err) {
-      attempt++;
-      // Respect Retry-After header if present
-      try {
-        const retryAfter = err?.headers?.get ? err.headers.get("retry-after") : null;
-        if (retryAfter) {
-          const wait = Number(retryAfter) * 1000;
-          await sleep(wait);
-          continue;
+    // If we found room type AND (date OR nights), it's a booking request
+    if (roomType && (dateMatch || nightsMatch)) {
+      const checkInDate = dateMatch ? dateMatch[1] : "TBD";
+      const nights = nightsMatch ? nightsMatch[1] : "TBD";
+      return {
+        intent: "booking_details_received",
+        response: `Great! I have these booking details:\n• Room Type: ${roomType}\n• Check-in: ${checkInDate}\n• Nights: ${nights}\n\nPlease confirm your full name and phone number to complete the booking.`,
+        bookingDetails: {
+          room_type: roomType,
+          check_in_date: checkInDate,
+          nights: nights
         }
-      } catch (_) {}
+      };
+    }
 
-      // If quota exhausted, return a friendly fallback immediately
-      if (err?.code === "insufficient_quota" || err?.error?.type === "insufficient_quota") {
-        console.error("OpenAI quota error:", err?.message || err);
-        const fallback = {
-          intent: "general",
-          response: "Sorry — our AI assistant is temporarily unavailable due to service limits. Our staff will assist you shortly."
+    // ✅ NAME AND PHONE CONFIRMATION (high priority)
+    // Pattern: "NAME PHONENUMBER" like "RAMAN 9876543210" or "John Doe, 9876543210"
+    const phonePattern = /(\d{10}|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})/;
+    const phoneMatch = query.match(phonePattern);
+    if (phoneMatch) {
+      // Extract name (everything before phone or comma)
+      const nameMatch = query.match(/^([a-zA-Z\s]+)/);
+      const guestName = nameMatch ? nameMatch[1].trim() : null;
+      
+      if (guestName && guestName.length > 2) {
+        return {
+          intent: "booking_confirmation_ready",
+          response: `Perfect! I have your contact details:\n• Name: ${guestName}\n• Phone: ${phoneMatch[0]}\n\nYour booking will be confirmed shortly. Thank you!`,
+          guestDetails: {
+            name: guestName,
+            phone: phoneMatch[0]
+          }
         };
-        setCache(cacheKey, fallback, 1000 * 60); // cache for 1 minute
-        return fallback;
       }
+    }
 
-      // Exponential backoff for transient errors
-      if (attempt <= maxRetries) {
-        const backoff = Math.pow(2, attempt) * 500;
-        await sleep(backoff);
-        continue;
+    // Price queries with specific room type
+    const priceKeywords = ["price", "cost", "rate", "how much", "charge"];
+    for (const room of hotelContext.rooms) {
+      const roomName = (room.type || "").toLowerCase();
+      if (roomName && normalized.includes(roomName) && priceKeywords.some(k => normalized.includes(k))) {
+        return {
+          intent: "pricing",
+          response: `The ${room.type} room costs ₹${room.price} per night. We have ${room.available} rooms available. Would you like to book?`
+        };
       }
+    }
 
-      console.error("OpenAI request failed after retries:", err);
-      return { intent: "general", response: "Sorry, I couldn't answer right now. Please try again later." };
+    // General availability check
+    if (normalized.includes("available") || (normalized.includes("room") && normalized.includes("have"))) {
+      const availableCount = hotelContext.rooms.reduce((sum, r) => sum + r.available, 0);
+      return {
+        intent: "availability",
+        response: `We have ${availableCount} rooms available across our ${hotelContext.rooms.length} room types. Our rates range from ₹${Math.min(...hotelContext.rooms.map(r => r.price))} to ₹${Math.max(...hotelContext.rooms.map(r => r.price))} per night.`
+      };
     }
   }
 
-  // Final fallback (shouldn't reach here)
-  return { intent: "general", response: "Sorry, something went wrong." };
+  // Booking intent (generic, no details yet)
+  if (normalized.includes("book") || normalized.includes("reserve")) {
+    return {
+      intent: "booking",
+      response: "I'd be happy to help you book a room! Please tell me: 1) Your preferred room type, 2) Check-in date (DD-MM-YYYY), and 3) How many nights."
+    };
+  }
+
+  // Welcome
+  if (normalized.includes("hello") || normalized.includes("hi") || normalized.includes("help")) {
+    return {
+      intent: "greeting",
+      response: "Hello! I'm your hotel assistant. I can help you with room availability, pricing, bookings, and other inquiries. How can I assist you?"
+    };
+  }
+
+  return null; // No rule matched
+}
+
+// --- MAIN FUNCTION ---
+export async function processGuestQuery(query, hotelContext = null, db = null, history = []) {
+  const normalized = query.trim().toLowerCase();
+
+  // 1. Try rule-based responses first (fast, no API call)
+  const ruleResponse = getRuleBasedResponse(query, hotelContext);
+  if (ruleResponse) {
+    setCache(`guestq:${normalized}:${hotelContext?.hotel_id || 'default'}`, ruleResponse);
+    return ruleResponse;
+  }
+
+  // 2. Simple yes/no responses (for booking confirmations)
+  if (normalized.includes("yes") || normalized.includes("confirm") || normalized.includes("proceed")) {
+    return {
+      intent: "confirmation",
+      response: "Perfect! Please provide your full name and phone number to complete the booking."
+    };
+  }
+
+  if (normalized.includes("no") || normalized.includes("cancel") || normalized.includes("decline")) {
+    return {
+      intent: "cancellation",
+      response: "No problem! Is there anything else I can help you with?"
+    };
+  }
+
+  // 3. CHECK CACHE
+  const cacheKey = `guestq:${normalized}:${hotelContext?.hotel_id || 'default'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  // 4. For complex queries, use HuggingFace (optional, fallback to generic response if fails)
+  // Most hotel queries are handled by rule-based logic above, so we rarely reach here
+  try {
+    // Build context for the AI
+    const hotelInfo = hotelContext ? `Hotel: ${hotelContext.hotel_name} (${hotelContext.location})` : "";
+    const roomInfo = hotelContext?.rooms
+      ? hotelContext.rooms.map(r => `${r.type}: ₹${r.price}/night (${r.available} available)`).join(", ")
+      : "";
+
+    const systemContext = `You are a friendly hotel assistant. ${hotelInfo}
+Available rooms: ${roomInfo || "No room data available"}
+Be concise and helpful.`;
+
+    const prompt = `${systemContext}\n\nGuest: ${query}\nAssistant:`;
+
+    console.log(`🤖 Calling HuggingFace (${HF_MODEL})...`);
+
+    const response = await fetch(HF_API_URL, {
+      headers: { Authorization: `Bearer ${HF_API_TOKEN}` },
+      method: "POST",
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: {
+          max_new_tokens: 150,
+          temperature: 0.7,
+          top_p: 0.95
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`HuggingFace API Error (${response.status}):`, errorText);
+
+      // Fallback: return generic response instead of error
+      return {
+        intent: "general",
+        response: "I'm having trouble processing complex requests right now. Please try rephrasing or ask our staff for assistance."
+      };
+    }
+
+    const data = await response.json();
+    
+    // Parse response
+    let aiResponse = "";
+    if (Array.isArray(data)) {
+      aiResponse = data[0]?.generated_text || "";
+      const assistantPart = aiResponse.split("Assistant:")?.pop()?.trim() || aiResponse;
+      aiResponse = assistantPart;
+    } else {
+      aiResponse = data.generated_text || "I couldn't generate a response.";
+    }
+
+    // Simple intent detection
+    let intent = "general";
+    const responseText = aiResponse.toLowerCase();
+    if (responseText.includes("book") || responseText.includes("reserve")) intent = "booking";
+    if (responseText.includes("price") || responseText.includes("cost")) intent = "pricing";
+    if (responseText.includes("available")) intent = "availability";
+
+    const result = {
+      intent,
+      response: aiResponse || "I'm not sure how to respond to that. Could you clarify?"
+    };
+
+    setCache(cacheKey, result);
+    return result;
+
+  } catch (err) {
+    console.error("HuggingFace API Error:", err.message);
+
+    // Final fallback: friendly generic response
+    return {
+      intent: "general",
+      response: "I'm having trouble with the AI service right now. Our staff is available 24/7 to assist you. How else can I help?"
+    };
+  }
 }

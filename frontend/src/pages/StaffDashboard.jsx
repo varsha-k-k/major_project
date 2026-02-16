@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
+
 
 function StaffDashboard() {
 
   const [analytics, setAnalytics] = useState({});
   const [bookings, setBookings] = useState([]);
 
+    const navigate = useNavigate();
   useEffect(() => {
 
     fetchAnalytics();
@@ -66,6 +69,11 @@ function StaffDashboard() {
   return (
     <div style={{ padding: "40px" }}>
 
+
+  <button onClick={() => navigate("/rooms")} style={{ marginBottom: "16px" }}>
+    Manage Rooms
+  </button>
+    
       <h1>Staff Dashboard</h1>
 
       {/* Analytics */}
@@ -124,6 +132,7 @@ function StaffDashboard() {
       </table>
 
     </div>
+  
   );
 
 }
