@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -26,9 +25,30 @@ function HotelSearch() {
   };
 
   return (
+    
     <div style={{ padding: "40px" }}>
-      <h1>Smart Hospitality Platform</h1>
-      <h3>Find Hotels Near You</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "30px" }}>
+        <div>
+          <h1>Smart Hospitality Platform</h1>
+          <h3>Find Hotels Near You</h3>
+        </div>
+        <button
+          onClick={() => navigate("/register-hotel")}
+          style={{ 
+            padding: "12px 20px", 
+            margin:"150px",
+            backgroundColor: "#4CAF50", 
+            color: "white", 
+            border: "none", 
+            borderRadius: "5px",
+            cursor: "pointer",
+            fontSize: "16px",
+            fontWeight: "bold"
+          }}
+        >
+          Register Hotel
+        </button>
+      </div>
 
       {/* Search box */}
       <input

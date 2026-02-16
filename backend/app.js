@@ -6,6 +6,7 @@ import pg from "pg";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { verifyToken } from "./middleware/auth.js";
+import { processGuestQuery } from "./services/aiService.js";
 
 const app = express();
 const port = 3000;
@@ -120,6 +121,11 @@ app.post("/api/hotels/register", async (req, res) => {
     // Hash staff password
     const hashedPassword = await bcrypt.hash(staff_password, 10);
 
+    // Parse languages_supported from comma-separated string to array
+    const langArray = languages_supported
+      ? languages_supported.split(",").map(lang => lang.trim()).filter(lang => lang)
+      : [];
+
     // Start transaction
     await db.query("BEGIN");
 
@@ -136,7 +142,7 @@ app.post("/api/hotels/register", async (req, res) => {
         contact_phone,
         contact_email,
         description,
-        languages_supported,
+        langArray,
         slug
       ]
     );
@@ -618,6 +624,46 @@ app.post("/api/guest/query", async (req, res) => {
   }
 });
 
+// app.post("/api/guest/query", async (req, res) => {
+
+//   const { hotel_id, query_text } = req.body;
+
+//   if (!hotel_id || !query_text) {
+//     return res.status(400).json({
+//       message: "hotel_id and query_text required"
+//     });
+//   }
+
+//   try {
+
+//     const aiResult = await processGuestQuery(query_text);
+
+//     const intent = aiResult.intent;
+//     const response = aiResult.response;
+
+//     await db.query(
+//       `INSERT INTO guest_queries
+//        (hotel_id, query_text, intent_detected, response_text)
+//        VALUES ($1, $2, $3, $4)`,
+//       [hotel_id, query_text, intent, response]
+//     );
+
+//     res.json({
+//       reply: response,
+//       intent: intent
+//     });
+
+//   } catch (err) {
+
+//     console.error(err);
+
+//     res.status(500).json({
+//       message: "AI processing failed"
+//     });
+
+//   }
+
+// });
 
 app.get("/api/staff/queries/summary", verifyToken,async (req, res) => {
   const  hotel_id  = req.user.hotel_id;
