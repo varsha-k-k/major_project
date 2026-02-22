@@ -45,7 +45,8 @@ app.post("/api/bookings", async (req, res) => {
     guest_name,
     guest_phone,
     check_in,
-    check_out
+    check_out,
+    number_of_rooms = 1
   } = req.body;
 
   try {
@@ -58,8 +59,13 @@ app.post("/api/bookings", async (req, res) => {
       return res.status(404).json({ message: "Room not found" });
     }
 
-    if (roomCheck.rows[0].available_rooms <= 0) {
+    const available = roomCheck.rows[0].available_rooms;
+    if (available <= 0) {
       return res.status(400).json({ message: "No rooms available" });
+    }
+
+    if (number_of_rooms > available) {
+      return res.status(400).json({ message: `Only ${available} room(s) available` });
     }
 
     await db.query(
@@ -70,8 +76,8 @@ app.post("/api/bookings", async (req, res) => {
     );
 
     await db.query(
-      "UPDATE rooms SET available_rooms = available_rooms - 1 WHERE room_id = $1",
-      [room_id]
+      "UPDATE rooms SET available_rooms = available_rooms - $2 WHERE room_id = $1",
+      [room_id, number_of_rooms]
     );
 
     res.json({ message: "Booking confirmed" });

@@ -14,9 +14,15 @@ const [input, setInput] = useState("");
 
   const [guestName, setGuestName] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
-  
+  const [checkInDate, setCheckInDate] = useState("");
+  const [checkOutDate, setCheckOutDate] = useState("");
+
   // Track booking details during conversation
   const [bookingDetails, setBookingDetails] = useState(null);
+  const [selectedRoomType, setSelectedRoomType] = useState("");
+  const [roomsCount, setRoomsCount] = useState(1);
+  const [adultsCount, setAdultsCount] = useState(1);
+  const [childrenCount, setChildrenCount] = useState(0);
 
   useEffect(() => {
     fetchHotel();
@@ -128,6 +134,19 @@ const [input, setInput] = useState("");
 };
 
   const handleBooking = async (room_id) => {
+    // basic validation
+    if (!guestName || !guestPhone || !checkInDate || !checkOutDate) {
+      alert("Please enter name, phone, check-in and check-out dates.");
+      return;
+    }
+
+    const inDate = new Date(checkInDate);
+    const outDate = new Date(checkOutDate);
+    if (outDate <= inDate) {
+      alert("Check-out date must be after check-in date.");
+      return;
+    }
+
     try {
       await axios.post(
         "http://localhost:3000/api/bookings",
@@ -136,14 +155,25 @@ const [input, setInput] = useState("");
           room_id,
           guest_name: guestName,
           guest_phone: guestPhone,
-          check_in: "2026-03-20",
-          check_out: "2026-03-21"
+          check_in: checkInDate,
+          check_out: checkOutDate,
+          number_of_rooms: roomsCount,
+          adults: adultsCount,
+          children: childrenCount
         }
       );
 
       alert("Booking confirmed!");
+      // reset selection
+      setSelectedRoomType("");
+      setCheckInDate("");
+      setCheckOutDate("");
+      setRoomsCount(1);
+      setAdultsCount(1);
+      setChildrenCount(0);
 
-      fetchHotel(); // refresh availability
+      // refresh availability from server to reconcile any differences
+      fetchHotel();
 
     } catch (err) {
       console.error(err);
@@ -166,23 +196,9 @@ const [input, setInput] = useState("");
 
       <hr />
 
-      {/* Guest input */}
-      <h3>Your Details</h3>
+      
 
-      <input
-        placeholder="Your Name"
-        onChange={(e) => setGuestName(e.target.value)}
-      />
-
-      <input
-        placeholder="Phone Number"
-        onChange={(e) => setGuestPhone(e.target.value)}
-        style={{ marginLeft: "10px" }}
-      />
-
-      <hr />
-
-      {/* Rooms */}
+    
       <h2>Available Rooms</h2>
 
       {rooms.map((room) => (
@@ -201,15 +217,88 @@ const [input, setInput] = useState("");
 
           <p>Available: {room.available_rooms}</p>
 
-          <button
-            disabled={room.available_rooms === 0}
-            onClick={() => handleBooking(room.room_id)}
-          >
-            Book Now
-          </button>
-
         </div>
       ))}
+    <h3>Your Details</h3>
+
+      <input
+        placeholder="Your Name"
+        value={guestName}
+        onChange={(e) => setGuestName(e.target.value)}
+      />
+
+      <input
+        placeholder="Phone Number"
+        value={guestPhone}
+        onChange={(e) => setGuestPhone(e.target.value)}
+        style={{ marginLeft: "10px" }}
+      />
+
+      <div style={{ marginTop: "10px" }}>
+        <label style={{ marginRight: 8 }}>Check-in:</label>
+        <input type="date" value={checkInDate} onChange={(e) => setCheckInDate(e.target.value)} />
+        <label style={{ marginLeft: 12, marginRight: 8 }}>Check-out:</label>
+        <input type="date" value={checkOutDate} onChange={(e) => setCheckOutDate(e.target.value)} />
+      </div>
+
+      <div style={{ marginTop: 12, display: "flex", gap: 24, alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 12, color: "#666" }}>Rooms</div>
+          <div style={{ display: "flex", alignItems: "center", marginTop: 6 }}>
+            <button onClick={() => setRoomsCount(c => Math.max(1, c - 1))}>-</button>
+            <div style={{ width: 32, textAlign: "center" }}>{roomsCount}</div>
+            <button onClick={() => setRoomsCount(c => c + 1)}>+</button>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 12, color: "#666" }}>Adults</div>
+          <div style={{ display: "flex", alignItems: "center", marginTop: 6 }}>
+            <button onClick={() => setAdultsCount(c => Math.max(1, c - 1))}>-</button>
+            <div style={{ width: 32, textAlign: "center" }}>{adultsCount}</div>
+            <button onClick={() => setAdultsCount(c => c + 1)}>+</button>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 12, color: "#666" }}>Children</div>
+          <div style={{ display: "flex", alignItems: "center", marginTop: 6 }}>
+            <button onClick={() => setChildrenCount(c => Math.max(0, c - 1))}>-</button>
+            <div style={{ width: 32, textAlign: "center" }}>{childrenCount}</div>
+            <button onClick={() => setChildrenCount(c => c + 1)}>+</button>
+          </div>
+        </div>
+      </div>
+
+      <hr />
+
+      <select value={selectedRoomType} onChange={(e) => setSelectedRoomType(e.target.value)} style={{ marginTop: "10px" }}>
+        <option value="">Select Room Type</option>
+        {rooms.filter(room => room.available_rooms > 0).map(room => (
+          <option key={room.room_id} value={room.room_type}>{room.room_type} - ₹{room.price_per_night}</option>
+        ))}
+      </select>
+
+      <div style={{ display: "flex", alignItems: "center", marginTop: 10 }}>
+        <div style={{ marginRight: 12 }}>
+          <strong>Guests:</strong> {roomsCount} Room(s), {adultsCount} Adult(s), {childrenCount} Child(ren)
+        </div>
+        <button onClick={() => {
+          if (!selectedRoomType) {
+            alert("Please select a room type");
+            return;
+          }
+          const room = rooms.find(r => r.room_type === selectedRoomType);
+          if (!room) return;
+          if (roomsCount > room.available_rooms) {
+            alert(`Only ${room.available_rooms} room(s) available for the selected type.`);
+            return;
+          }
+          handleBooking(room.room_id);
+        }} style={{ marginLeft: "10px" }}>
+          Book Now
+        </button>
+      </div>
 
     </div>
 
