@@ -92,10 +92,10 @@ function StaffDashboard() {
           {/* Analytics */}
           <div style={{ display: "flex", gap: "20px", marginBottom: "30px" }}>
 
-            <div style={cardStyle}>
+            {/* <div style={cardStyle}>
               <h3>Total Bookings</h3>
               <p>{analytics.total_bookings || 0}</p>
-            </div>
+            </div> */}
 
             <div style={cardStyle}>
               <h3>Total Revenue</h3>
@@ -124,7 +124,7 @@ function StaffDashboard() {
                 <th>Guest</th>
                 <th>Phone</th>
                 <th>Room</th>
-                <th>Status</th>
+                {/* <th>Status</th> */}
               </tr>
 
             </thead>
@@ -136,7 +136,7 @@ function StaffDashboard() {
                   <td>{b.guest_name}</td>
                   <td>{b.guest_phone}</td>
                   <td>{b.room_type}</td>
-                  <td>{b.status}</td>
+                  {/* <td>{b.status}</td> */}
                 </tr>
               ))}
 

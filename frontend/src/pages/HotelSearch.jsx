@@ -27,8 +27,7 @@ function HotelSearch() {
   return (
     
     <div style={{ padding: "40px" }}>
-      <h3 style={{ textAlign: "center", marginBottom: "30px" }}>Find Hotels Near You</h3>
-
+     
       {/* Search box */}
       <input
         placeholder="Enter city or hotel name"
