@@ -16,23 +16,38 @@ function HotelRegister() {
     languages_supported: "",
     staff_name: "",
     staff_email: "",
-    staff_password: ""
+    staff_password: "",
+    license_file: null
   });
 
   const handleChange = (e) => {
+    const { name, value, type, files } = e.target;
     setForm({
       ...form,
-      [e.target.name]: e.target.value
+      [name]: type === 'file' ? files[0] : value
     });
   };
 
   const handleSubmit = async () => {
 
     try {
+      const formData = new FormData();
+      
+      // Add all form fields to FormData
+      Object.keys(form).forEach(key => {
+        if (form[key] !== null && form[key] !== '') {
+          formData.append(key, form[key]);
+        }
+      });
 
       await axios.post(
         "http://localhost:3000/api/hotels/register",
-        form
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        }
       );
 
       alert("Hotel registered successfully");
@@ -52,39 +67,184 @@ function HotelRegister() {
     navigate("/staff-login");
   };
   return (
-    <div style={{ padding: "40px" }}>
+    <div style={{ 
+      padding: "40px", 
+      maxWidth: "400px", 
+      margin: "50px auto",
+      border: "1px solid #ddd",
+      borderRadius: "8px",
+      boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+    }}>
 
-      <h2>Register Your Hotel</h2>
+      <h2 style={{ textAlign: "center" }}>Register Your Hotel</h2>
 
-      <input name="hotel_name" placeholder="Hotel Name" onChange={handleChange} /><br /><br />
+      <input 
+        name="hotel_name" 
+        placeholder="Hotel Name" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="location" placeholder="Location" onChange={handleChange} /><br /><br />
+      <input 
+        name="location" 
+        placeholder="Location" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="address" placeholder="Address" onChange={handleChange} /><br /><br />
+      <input 
+        name="address" 
+        placeholder="Address" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="contact_phone" placeholder="Phone" onChange={handleChange} /><br /><br />
+      <input 
+        name="contact_phone" 
+        placeholder="Phone" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="contact_email" placeholder="Email" onChange={handleChange} /><br /><br />
+      <input 
+        name="contact_email" 
+        placeholder="Email" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="description" placeholder="Description" onChange={handleChange} /><br /><br />
+      <input 
+        name="description" 
+        placeholder="Description" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="languages_supported" placeholder="Languages Supported (e.g., English, Spanish)" onChange={handleChange} /><br /><br />
+      <input 
+        name="languages_supported" 
+        placeholder="Languages Supported (e.g., English, Spanish)" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <h3>Staff Account</h3>
+      <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Hotel License Document:</label>
+      <input 
+        type="file" 
+        name="license_file" 
+        accept=".pdf,.jpg,.jpeg,.png" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="staff_name" placeholder="Staff Name" onChange={handleChange} /><br /><br />
+      <h3 style={{ textAlign: "center", marginBottom: "15px" }}>Account Details</h3>
 
-      <input name="staff_email" placeholder="Staff Email" onChange={handleChange} /><br /><br />
+      <input 
+        name="staff_name" 
+        placeholder="Name" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
-      <input name="staff_password" type="password" placeholder="Password" onChange={handleChange} /><br /><br />
+      <input 
+        name="staff_email" 
+        placeholder="Email" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
+
+      <input 
+        name="staff_password" 
+        type="password" 
+        placeholder="Password" 
+        onChange={handleChange}
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginBottom: "15px",
+          border: "1px solid #ddd",
+          borderRadius: "4px",
+          boxSizing: "border-box"
+        }}
+      />
 
       <button onClick={handleSubmit}
         style={{
-          padding: "12px 20px",
-          backgroundColor: "#4CAF50",
+          width: "100%",
+          padding: "12px",
+          backgroundColor: "#2196F3",
           color: "white",
           border: "none",
-          borderRadius: "5px",
+          borderRadius: "4px",
           cursor: "pointer",
           fontSize: "16px",
           fontWeight: "bold"

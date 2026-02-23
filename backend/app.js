@@ -4,6 +4,9 @@ import cors from "cors";
 import dotenv from "dotenv";
 import pg from "pg";
 import jwt from "jsonwebtoken";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { verifyToken } from "./middleware/auth.js";
 import { processGuestQuery } from "./services/aiService.js";
 import { 
@@ -37,6 +40,41 @@ app.use(cors({
 app.use(express.json());
 
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Create uploads directory if it doesn't exist
+const uploadsDir = 'uploads/';
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|pdf/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files (JPEG, PNG) and PDF files are allowed!'));
+    }
+  }
+});
 
 app.get("/", (req, res) => {
   res.send("Welcome to the Smart Hospitality System API");
@@ -179,7 +217,7 @@ app.post("/api/bookings", async (req, res) => {
   }
 });
 
-app.post("/api/hotels/register", async (req, res) => {
+app.post("/api/hotels/register", upload.single('license_file'), async (req, res) => {
   const {
     hotel_name,
     location,
@@ -192,6 +230,8 @@ app.post("/api/hotels/register", async (req, res) => {
     staff_email,
     staff_password
   } = req.body;
+
+  const licenseFile = req.file;
 
   if (!hotel_name || !location || !contact_phone || !contact_email ||
       !staff_name || !staff_email || !staff_password) {
@@ -227,8 +267,8 @@ app.post("/api/hotels/register", async (req, res) => {
     // Insert hotel
     const hotelResult = await db.query(
       `INSERT INTO hotels
-       (hotel_name, location, address, contact_phone, contact_email, description, languages_supported, slug)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       (hotel_name, location, address, contact_phone, contact_email, description, languages_supported, slug, license_file_path)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        RETURNING hotel_id`,
       [
         hotel_name,
@@ -238,7 +278,8 @@ app.post("/api/hotels/register", async (req, res) => {
         contact_email,
         description,
         langArray,
-        slug
+        slug,
+        licenseFile ? licenseFile.path : null
       ]
     );
 
@@ -620,8 +661,68 @@ app.get("/api/staff/bookings", verifyToken , async (req, res) => {
 
 
 
-app.get("/api/staff/analytics", verifyToken,async (req, res) => {
-  const  hotel_id  = req.user.hotel_id;
+// app.get("/api/staff/analytics", verifyToken,async (req, res) => {
+//   const  hotel_id  = req.user.hotel_id;
+
+//   if (!hotel_id) {
+//     return res.status(400).json({ message: "hotel_id is required" });
+//   }
+
+//   try {
+//     // 1️⃣ Confirmed bookings count
+//     const confirmedBookings = await db.query(
+//       `SELECT COUNT(*) 
+//        FROM bookings 
+//        WHERE hotel_id = $1 AND booking_status = 'confirmed'`,
+//       [hotel_id]
+//     );
+
+//     // 2️⃣ Cancelled bookings count
+//     const cancelledBookings = await db.query(
+//       `SELECT COUNT(*) 
+//        FROM bookings 
+//        WHERE hotel_id = $1 AND booking_status = 'cancelled'`,
+//       [hotel_id]
+//     );
+
+//     // 3️⃣ Revenue (confirmed bookings only)
+//     const revenue = await db.query(
+//       `SELECT COALESCE(SUM(r.price_per_night), 0) AS revenue
+//        FROM bookings b
+//        JOIN rooms r ON b.room_id = r.room_id
+//        WHERE b.hotel_id = $1
+//          AND b.booking_status = 'confirmed'`,
+//       [hotel_id]
+//     );
+
+//     // 4️⃣ Most popular room (confirmed only)
+//     const popularRoom = await db.query(
+//       `SELECT r.room_type, COUNT(*) AS count
+//        FROM bookings b
+//        JOIN rooms r ON b.room_id = r.room_id
+//        WHERE b.hotel_id = $1
+//          AND b.booking_status = 'confirmed'
+//        GROUP BY r.room_type
+//        ORDER BY count DESC
+//        LIMIT 1`,
+//       [hotel_id]
+//     );
+
+//     res.json({
+//       confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
+//       cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
+//       total_revenue: revenue.rows[0].revenue,
+//       most_popular_room: popularRoom.rows[0] || null
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+app.get("/api/staff/analytics", verifyToken, async (req, res) => {
+  const hotel_id = req.user.hotel_id;
 
   if (!hotel_id) {
     return res.status(400).json({ message: "hotel_id is required" });
@@ -644,9 +745,9 @@ app.get("/api/staff/analytics", verifyToken,async (req, res) => {
       [hotel_id]
     );
 
-    // 3️⃣ Revenue (confirmed bookings only)
+    // 3️⃣ Total Revenue (confirmed bookings only)
     const revenue = await db.query(
-      `SELECT COALESCE(SUM(r.price_per_night), 0) AS revenue
+      `SELECT COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) AS revenue
        FROM bookings b
        JOIN rooms r ON b.room_id = r.room_id
        WHERE b.hotel_id = $1
@@ -667,16 +768,32 @@ app.get("/api/staff/analytics", verifyToken,async (req, res) => {
       [hotel_id]
     );
 
+    // 5️⃣ NEW: Revenue Trend (Last 30 Days Grouped by Date)
+    const revenueTrend = await db.query(
+      `SELECT 
+         TO_CHAR(b.created_at, 'Mon DD') as date,
+         COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) as daily_revenue
+       FROM bookings b
+       JOIN rooms r ON b.room_id = r.room_id
+       WHERE b.hotel_id = $1
+         AND b.booking_status = 'confirmed'
+         AND b.created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY TO_CHAR(b.created_at, 'Mon DD'), DATE(b.created_at)
+       ORDER BY DATE(b.created_at) ASC`,
+      [hotel_id]
+    );
+
     res.json({
       confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
       cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
-      total_revenue: revenue.rows[0].revenue,
-      most_popular_room: popularRoom.rows[0] || null
+      total_revenue: parseInt(revenue.rows[0].revenue),
+      most_popular_room: popularRoom.rows[0] || null,
+      revenue_trend: revenueTrend.rows // Sent to frontend for the chart
     });
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error generating analytics" });
   }
 });
 
