@@ -8,7 +8,6 @@ import HotelRegister from "./pages/HotelRegister";
 import RoomManagement from "./pages/RoomManagement";
 import LandingPage from "./pages/LandingPage";
 
-
 function App() {
   return (
     <Routes>

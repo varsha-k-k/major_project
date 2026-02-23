@@ -78,7 +78,7 @@ const [input, setInput] = useState("");
           room_id: room.room_id,
           type: room.room_type,
           price: room.price_per_night,
-          available: room.available_rooms,
+          // available: room.available_rooms,
           total: room.total_rooms
         }))
       }
@@ -274,7 +274,7 @@ const [input, setInput] = useState("");
 
       <select value={selectedRoomType} onChange={(e) => setSelectedRoomType(e.target.value)} style={{ marginTop: "10px" }}>
         <option value="">Select Room Type</option>
-        {rooms.filter(room => room.available_rooms > 0).map(room => (
+        {rooms.map(room => (
           <option key={room.room_id} value={room.room_type}>{room.room_type} - ₹{room.price_per_night}</option>
         ))}
       </select>

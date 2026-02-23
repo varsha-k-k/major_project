@@ -139,16 +139,6 @@ function RoomManagement() {
           }
         />
 
-        <input
-          placeholder="Available Rooms"
-          onChange={(e) =>
-            setNewRoom({
-              ...newRoom,
-              available_rooms: e.target.value
-            })
-          }
-        />
-
         <button onClick={handleAddRoom}>
           Add Room
         </button>
@@ -157,65 +147,7 @@ function RoomManagement() {
 
       <hr />
 
-      {/* Room List
-      <h3>Your Rooms</h3>
-
-      <table border="1" cellPadding="10">
-
-        <thead>
-
-          <tr>
-            <th>Type</th>
-            <th>Price</th>
-            <th>Available</th>
-            <th>Total</th>
-          </tr>
-
-        </thead>
-
-        <tbody>
-
-          {rooms.map(room => (
-
-            <tr key={room.room_id}>
-
-              <td>{room.room_type}</td>
-
-              <td>
-                <input
-                  defaultValue={room.price_per_night}
-                  onBlur={(e) =>
-                    updateRoom(
-                      room.room_id,
-                      "price_per_night",
-                      e.target.value
-                    )
-                  }
-                />
-              </td>
-
-              <td>
-                <input
-                  defaultValue={room.available_rooms}
-                  onBlur={(e) =>
-                    updateRoom(
-                      room.room_id,
-                      "available_rooms",
-                      e.target.value
-                    )
-                  }
-                />
-              </td>
-
-              <td>{room.total_rooms}</td>
-
-            </tr>
-
-          ))}
-
-        </tbody>
-
-      </table> */}
+   
 
     </div>
   );

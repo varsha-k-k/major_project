@@ -3,10 +3,14 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import dotenv from "dotenv";
 import pg from "pg";
-import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { verifyToken } from "./middleware/auth.js";
 import { processGuestQuery } from "./services/aiService.js";
+import { 
+  calculateOptimalPrice, 
+  getPricingRecommendations, 
+  applyRecommendedPrice 
+} from "./services/pricingEngine.js";
 
 const app = express();
 const port = 3000;
@@ -38,6 +42,56 @@ app.get("/", (req, res) => {
   res.send("Welcome to the Smart Hospitality System API");
 });
 
+// app.post("/api/bookings", async (req, res) => {
+//   const {
+//     hotel_id,
+//     room_id,
+//     guest_name,
+//     guest_phone,
+//     check_in,
+//     check_out,
+//     number_of_rooms = 1
+//   } = req.body;
+
+//   try {
+//     const roomCheck = await db.query(
+//       "SELECT available_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2",
+//       [room_id, hotel_id]
+//     );
+
+//     if (roomCheck.rows.length === 0) {
+//       return res.status(404).json({ message: "Room not found" });
+//     }
+
+//     const available = roomCheck.rows[0].available_rooms;
+//     if (available <= 0) {
+//       return res.status(400).json({ message: "No rooms available" });
+//     }
+
+//     if (number_of_rooms > available) {
+//       return res.status(400).json({ message: `Only ${available} room(s) available` });
+//     }
+
+//     await db.query(
+//       `INSERT INTO bookings
+//        (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date)
+//        VALUES ($1,$2,$3,$4,$5,$6)`,
+//       [hotel_id, room_id, guest_name, guest_phone, check_in, check_out]
+//     );
+
+//     await db.query(
+//       "UPDATE rooms SET available_rooms = available_rooms - $2 WHERE room_id = $1",
+//       [room_id, number_of_rooms]
+//     );
+
+//     res.json({ message: "Booking confirmed" });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
 app.post("/api/bookings", async (req, res) => {
   const {
     hotel_id,
@@ -49,46 +103,81 @@ app.post("/api/bookings", async (req, res) => {
     number_of_rooms = 1
   } = req.body;
 
+  if (!check_in || !check_out) {
+    return res.status(400).json({ message: "Check-in and check-out dates are required." });
+  }
+
   try {
+    await db.query("BEGIN"); // Start transaction
+
+    // ==========================================
+    // STEP 1: LOCK THE ROOM ROW (The Fix!)
+    // ==========================================
+    // We lock the parent room row. No other transaction can read or update this 
+    // specific room's availability until we COMMIT or ROLLBACK.
     const roomCheck = await db.query(
-      "SELECT available_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2",
+      "SELECT total_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2 FOR UPDATE",
       [room_id, hotel_id]
     );
 
     if (roomCheck.rows.length === 0) {
+      await db.query("ROLLBACK");
       return res.status(404).json({ message: "Room not found" });
     }
 
-    const available = roomCheck.rows[0].available_rooms;
-    if (available <= 0) {
-      return res.status(400).json({ message: "No rooms available" });
+    const totalRooms = roomCheck.rows[0].total_rooms;
+
+    // ==========================================
+    // STEP 2: CALCULATE OVERLAPPING DATES 
+    // ==========================================
+    // Removed FOR UPDATE from here. It's safe to run because we already locked the room.
+    const overlapCheck = await db.query(
+      `SELECT SUM(number_of_rooms) as booked_count 
+       FROM bookings 
+       WHERE room_id = $1 
+         AND booking_status = 'confirmed'
+         AND check_in_date < $3 
+         AND check_out_date > $2`,
+      [room_id, check_in, check_out]
+    );
+
+    const currentlyBooked = parseInt(overlapCheck.rows[0].booked_count) || 0;
+    
+    // ==========================================
+    // STEP 3: ENFORCE CAPACITY
+    // ==========================================
+    const actualAvailable = totalRooms - currentlyBooked;
+
+    if (actualAvailable <= 0) {
+      await db.query("ROLLBACK");
+      return res.status(400).json({ message: "No rooms available for these dates." });
     }
 
-    if (number_of_rooms > available) {
-      return res.status(400).json({ message: `Only ${available} room(s) available` });
+    if (number_of_rooms > actualAvailable) {
+      await db.query("ROLLBACK");
+      return res.status(400).json({ message: `Only ${actualAvailable} room(s) available for these dates.` });
     }
 
+    // ==========================================
+    // STEP 4: INSERT BOOKING
+    // ==========================================
     await db.query(
       `INSERT INTO bookings
-       (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [hotel_id, room_id, guest_name, guest_phone, check_in, check_out]
+       (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, number_of_rooms, booking_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed')`,
+      [hotel_id, room_id, guest_name, guest_phone, check_in, check_out, number_of_rooms]
     );
 
-    await db.query(
-      "UPDATE rooms SET available_rooms = available_rooms - $2 WHERE room_id = $1",
-      [room_id, number_of_rooms]
-    );
+    await db.query("COMMIT"); // Release the lock and save!
 
-    res.json({ message: "Booking confirmed" });
+    res.json({ message: "Booking confirmed successfully!" });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    await db.query("ROLLBACK"); // Release the lock and undo on error
+    console.error("Booking Error:", err);
+    res.status(500).json({ message: "Server error during booking" });
   }
 });
-
-
 
 app.post("/api/hotels/register", async (req, res) => {
   const {
@@ -124,8 +213,8 @@ app.post("/api/hotels/register", async (req, res) => {
       return res.status(409).json({ message: "Hotel already registered" });
     }
 
-    // Hash staff password
-    const hashedPassword = await bcrypt.hash(staff_password, 10);
+    // Store password directly (for development only)
+    const hashedPassword = staff_password;
 
     // Parse languages_supported from comma-separated string to array
     const langArray = languages_supported
@@ -217,8 +306,50 @@ app.get("/api/hotels/search", async (req, res) => {
 
 
 
+// app.get("/api/hotels/:slug", async (req, res) => {
+//   const { slug } = req.params;
+
+//   try {
+//     // Fetch hotel details
+//     const hotelResult = await db.query(
+//       `SELECT hotel_id, hotel_name, location, address, description, languages_supported
+//        FROM hotels
+//        WHERE slug = $1`,
+//       [slug]
+//     );
+
+//     if (hotelResult.rows.length === 0) {
+//       return res.status(404).json({
+//         message: "Hotel not found"
+//       });
+//     }
+
+//     const hotel = hotelResult.rows[0];
+
+//     // Fetch room details for this hotel
+//     const roomsResult = await db.query(
+//       `SELECT room_id, room_type, price_per_night, available_rooms
+//        FROM rooms
+//        WHERE hotel_id = $1`,
+//       [hotel.hotel_id]
+//     );
+
+//     res.json({
+//       hotel: hotel,
+//       rooms: roomsResult.rows
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({
+//       message: "Server error"
+//     });
+//   }
+// });
+
 app.get("/api/hotels/:slug", async (req, res) => {
   const { slug } = req.params;
+  const { date } = req.query; // Check if the frontend passed a specific date
 
   try {
     // Fetch hotel details
@@ -230,20 +361,36 @@ app.get("/api/hotels/:slug", async (req, res) => {
     );
 
     if (hotelResult.rows.length === 0) {
-      return res.status(404).json({
-        message: "Hotel not found"
-      });
+      return res.status(404).json({ message: "Hotel not found" });
     }
 
     const hotel = hotelResult.rows[0];
+    let roomsResult;
 
-    // Fetch room details for this hotel
-    const roomsResult = await db.query(
-      `SELECT room_id, room_type, price_per_night, available_rooms
-       FROM rooms
-       WHERE hotel_id = $1`,
-      [hotel.hotel_id]
-    );
+    // THE COALESCE LOGIC:
+    if (date) {
+      // If a date is provided, join with the overrides table
+      roomsResult = await db.query(
+        `SELECT 
+            r.room_id, 
+            r.room_type, 
+            
+            COALESCE(o.custom_price, r.price_per_night) AS price_per_night
+         FROM rooms r
+         LEFT JOIN room_price_overrides o 
+            ON r.room_id = o.room_id AND o.target_date = $2
+         WHERE r.hotel_id = $1`,
+        [hotel.hotel_id, date]
+      );
+    } else {
+      // If no date is provided, just return the standard base prices
+      roomsResult = await db.query(
+        `SELECT room_id, room_type, price_per_night
+         FROM rooms
+         WHERE hotel_id = $1`,
+        [hotel.hotel_id]
+      );
+    }
 
     res.json({
       hotel: hotel,
@@ -252,13 +399,9 @@ app.get("/api/hotels/:slug", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      message: "Server error"
-    });
+    res.status(500).json({ message: "Server error" });
   }
 });
-
-
 
 app.post("/api/staff/login", async (req, res) => {
   const { email, password } = req.body;
@@ -285,7 +428,7 @@ app.post("/api/staff/login", async (req, res) => {
 
     const staff = result.rows[0];
 
-    const isMatch = await bcrypt.compare(password, staff.password_hash);
+    const isMatch = password === staff.password_hash;
 
     if (!isMatch) {
       return res.status(401).json({
@@ -337,7 +480,7 @@ app.get("/api/rooms", verifyToken, async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT room_id, room_type, price_per_night, available_rooms, total_rooms
+      `SELECT room_id, room_type, price_per_night, total_rooms
        FROM rooms
        WHERE hotel_id = $1`,
       [hotel_id]
@@ -358,15 +501,15 @@ app.post("/api/rooms", verifyToken, async (req, res) => {
     room_type,
     price_per_night,
     total_rooms,
-    available_rooms
+  
   } = req.body;
 
   if (
     !hotel_id ||
     !room_type ||
     price_per_night == null ||
-    total_rooms == null ||
-    available_rooms == null
+    total_rooms == null 
+
   ) {
     return res.status(400).json({ message: "Required fields missing" });
   }
@@ -374,15 +517,14 @@ app.post("/api/rooms", verifyToken, async (req, res) => {
   try {
     const result = await db.query(
       `INSERT INTO rooms
-       (hotel_id, room_type, price_per_night, total_rooms, available_rooms)
-       VALUES ($1,$2,$3,$4,$5)
+       (hotel_id, room_type, price_per_night, total_rooms)
+       VALUES ($1,$2,$3,$4)
        RETURNING room_id`,
       [
         hotel_id,
         room_type,
         price_per_night,
-        total_rooms,
-        available_rooms
+        total_rooms
       ]
     );
 
@@ -401,9 +543,9 @@ app.post("/api/rooms", verifyToken, async (req, res) => {
 
 app.patch("/api/rooms/:room_id", async (req, res) => {
   const { room_id } = req.params;
-  const { price_per_night,  available_rooms } = req.body;
+  const { price_per_night} = req.body;
 
-  if (price_per_night == null&& available_rooms == null) {
+  if (price_per_night == null) {
     return res.status(400).json({ message: "Nothing to update" });
   }
 
@@ -421,21 +563,20 @@ app.patch("/api/rooms/:room_id", async (req, res) => {
     const total_rooms = roomResult.rows[0].total_rooms;
 
     // Validate availability
-    if (available_rooms != null) {
-      if (available_rooms < 0 || available_rooms > total_rooms) {
-        return res.status(400).json({
-          message: `available_rooms must be between 0 and ${total_rooms}`
-        });
-      }
-    }
+    // if (available_rooms != null) {
+    //   if (available_rooms < 0 || available_rooms > total_rooms) {
+    //     return res.status(400).json({
+    //       message: `available_rooms must be between 0 and ${total_rooms}`
+    //     });
+    //   }
+    // }
 
     await db.query(
       `UPDATE rooms
        SET
-         price_per_night = COALESCE($1, price_per_night),
-         available_rooms = COALESCE($2, available_rooms)
+         price_per_night = COALESCE($1, price_per_night)
        WHERE room_id = $3`,
-      [price_per_night, available_rooms, room_id]
+      [price_per_night, room_id]
     );
 
     res.json({ message: "Room updated successfully" });
@@ -888,6 +1029,130 @@ app.patch("/api/bookings/:booking_id/cancel", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
+app.get("/api/pricing/recommendations", verifyToken, async (req, res) => {
+  const hotelId = req.user.hotel_id;
+  const daysAhead = parseInt(req.query.days) || 7;
+
+  if (!hotelId) {
+    return res.status(400).json({ message: "Hotel ID required" });
+  }
+
+  try {
+    console.log(
+      `\n🎯 Getting pricing recommendations for hotel ${hotelId} (${daysAhead} days)`
+    );
+
+    const recommendations = await getPricingRecommendations(
+      db,
+      hotelId,
+      daysAhead
+    );
+
+    res.json({
+      hotel_id: hotelId,
+      total_recommendations: recommendations.length,
+      days_ahead: daysAhead,
+      recommendations: recommendations,
+    });
+  } catch (err) {
+    console.error("Error:", err);
+    res.status(500).json({ message: "Failed to get recommendations" });
+  }
+});
+
+app.post("/api/pricing/calculate", verifyToken, async (req, res) => {
+  const hotelId = req.user.hotel_id;
+  const { room_id, booking_date } = req.body;
+
+  if (!room_id || !booking_date) {
+    return res
+      .status(400)
+      .json({ message: "room_id and booking_date required" });
+  }
+
+  try {
+    const date = new Date(booking_date);
+    const pricing = await calculateOptimalPrice(db, hotelId, room_id, date);
+
+    res.json({
+      room_id,
+      booking_date,
+      ...pricing,
+    });
+  } catch (err) {
+    console.error("Error:", err);
+    res.status(500).json({ message: "Failed to calculate price" });
+  }
+});
+
+app.post("/api/pricing/apply", verifyToken, async (req, res) => {
+  const hotelId = req.user.hotel_id;
+  // ADDED: We must extract target_date from the frontend request
+  const { room_id, new_price, target_date } = req.body;
+
+  if (!room_id || !new_price || !target_date) {
+    return res.status(400).json({ message: "room_id, new_price, and target_date required" });
+  }
+
+  try {
+    // UPDATED: Pass target_date into the pricingEngine function
+    const result = await applyRecommendedPrice(
+      db,
+      hotelId,
+      room_id,
+      target_date, 
+      new_price
+    );
+
+    res.json({
+      message: "Price applied successfully",
+      room: result,
+    });
+  } catch (err) {
+    console.error("Error:", err);
+    res.status(500).json({ message: "Failed to apply price" });
+  }
+});
+
+app.get("/api/pricing/history", verifyToken, async (req, res) => {
+  const hotelId = req.user.hotel_id;
+  const days = parseInt(req.query.days) || 30;
+
+  if (!hotelId) {
+    return res.status(400).json({ message: "Hotel ID required" });
+  }
+
+  try {
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - days);
+
+    const result = await db.query(
+      `SELECT 
+        room_id, 
+        date_for_booking, 
+        base_price, 
+        calculated_price, 
+        occupancy_rate,
+        reason
+       FROM pricing_history
+       WHERE hotel_id = $1 AND created_at >= $2
+       ORDER BY created_at DESC`,
+      [hotelId, fromDate]
+    );
+
+    res.json({
+      hotel_id: hotelId,
+      period_days: days,
+      total_records: result.rows.length,
+      history: result.rows,
+    });
+  } catch (err) {
+    console.error("Error:", err);
+    res.status(500).json({ message: "Failed to get history" });
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
