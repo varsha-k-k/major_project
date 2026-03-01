@@ -190,6 +190,15 @@ function StaffDashboard() {
                 <div style={metricValueStyle}>{analytics.key_metrics.alos}</div>
                 <div style={{ fontSize: "12px", color: "#6b7280", marginTop: "8px" }}>Avg Length of Stay (Nights)</div>
               </div>
+
+              {/* CANCELLATION RATE CARD */}
+              <div style={metricCardStyle}>
+                <div style={metricLabelStyle}>❌ Cancellation Rate</div>
+                <div style={metricValueStyle}>{analytics.key_metrics.cancellation_rate}%</div>
+                <div style={{ fontSize: "12px", color: "#6b7280", marginTop: "8px" }}>
+                  {analytics.summary.cancelled_bookings} cancelled bookings
+                </div>
+              </div>
             </div>
 
             {/* CHARTS SECTION */}
@@ -217,13 +226,24 @@ function StaffDashboard() {
                   </div>
                 )}
 
-                {parseFloat(analytics.key_metrics.cancellation_rate) > 20 && (
+                {/* {parseFloat(analytics.key_metrics.cancellation_rate) > 20 && (
                   <div style={alertStyle("warning")}> 
                     <strong>⚠️ High Cancellations</strong>
                     <p>Cancellation rate is {analytics.key_metrics.cancellation_rate}%. Review your cancellation and refund policy.</p>
                   </div>
+                )} */}
+{/* UPGRADED CANCELLATION ALERT */}
+                {parseFloat(analytics.key_metrics.cancellation_rate) > 20 && (
+                  <div style={alertStyle("danger")}> 
+                    <strong>🚨 High Cancellation Rate!</strong>
+                    <p>
+                      Your cancellation rate has hit {analytics.key_metrics.cancellation_rate}% 
+                      ({analytics.summary.cancelled_bookings} cancelled bookings). 
+                      Consider making your refund policy stricter or offering non-refundable discounted rates.
+                    </p>
+                  </div>
                 )}
-
+                
                 {parseFloat(analytics.key_metrics.repeat_guest_rate) > 20 && (
                   <div style={alertStyle("success")}> 
                     <strong>✅ Great Guest Loyalty</strong>
@@ -334,11 +354,6 @@ function StaffDashboard() {
             )}
           </div>
         )}
-
-
-           
-        
-
       </main>
 
       
@@ -378,12 +393,19 @@ const metricChangeStyle = (value) => ({
   marginTop: "8px",
 });
 
+// const alertStyle = (type) => ({
+//   backgroundColor: type === "warning" ? "#fef3c7" : "#d1fae5",
+//   border: `1px solid ${type === "warning" ? "#facc15" : "#10b981"}`,
+//   padding: "16px",
+//   borderRadius: "8px",
+//   color: type === "warning" ? "#92400e" : "#064e3b",
+// });
+
 const alertStyle = (type) => ({
-  backgroundColor: type === "warning" ? "#fef3c7" : "#d1fae5",
-  border: `1px solid ${type === "warning" ? "#facc15" : "#10b981"}`,
+  backgroundColor: type === "danger" ? "#fef2f2" : type === "warning" ? "#fef3c7" : "#d1fae5",
+  border: `1px solid ${type === "danger" ? "#fca5a5" : type === "warning" ? "#facc15" : "#10b981"}`,
   padding: "16px",
   borderRadius: "8px",
-  color: type === "warning" ? "#92400e" : "#064e3b",
+  color: type === "danger" ? "#b91c1c" : type === "warning" ? "#92400e" : "#064e3b",
 });
-
 export default StaffDashboard;

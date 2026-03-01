@@ -86,16 +86,94 @@ app.get("/", (req, res) => {
 });
 
 
+// app.post("/api/bookings", async (req, res) => {
+//   const {
+//     hotel_id,
+//     room_id,
+//     guest_name,
+//     guest_phone,
+//     check_in,
+//     check_out,
+//     number_of_rooms = 1
+//   } = req.body;
+
+//   if (!check_in || !check_out) {
+//     return res.status(400).json({ message: "Check-in and check-out dates are required." });
+//   }
+
+//   try {
+//     await db.query("BEGIN"); // Start transaction
+
+
+//     const roomCheck = await db.query(
+//       "SELECT total_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2 FOR UPDATE",
+//       [room_id, hotel_id]
+//     );
+
+//     if (roomCheck.rows.length === 0) {
+//       await db.query("ROLLBACK");
+//       return res.status(404).json({ message: "Room not found" });
+//     }
+
+//     const totalRooms = roomCheck.rows[0].total_rooms;
+
+//     // ==========================================
+//     // STEP 2: CALCULATE OVERLAPPING DATES 
+//     // ==========================================
+//     // Removed FOR UPDATE from here. It's safe to run because we already locked the room.
+//     const overlapCheck = await db.query(
+//       `SELECT SUM(number_of_rooms) as booked_count 
+//        FROM bookings 
+//        WHERE room_id = $1 
+//          AND booking_status = 'confirmed'
+//          AND check_in_date < $3 
+//          AND check_out_date > $2`,
+//       [room_id, check_in, check_out]
+//     );
+
+//     const currentlyBooked = parseInt(overlapCheck.rows[0].booked_count) || 0;
+    
+//     // ==========================================
+//     // STEP 3: ENFORCE CAPACITY
+//     // ==========================================
+//     const actualAvailable = totalRooms - currentlyBooked;
+
+//     if (actualAvailable <= 0) {
+//       await db.query("ROLLBACK");
+//       return res.status(400).json({ message: "No rooms available for these dates." });
+//     }
+
+//     if (number_of_rooms > actualAvailable) {
+//       await db.query("ROLLBACK");
+//       return res.status(400).json({ message: `Only ${actualAvailable} room(s) available for these dates.` });
+//     }
+
+//     // ==========================================
+//     // STEP 4: INSERT BOOKING
+//     // ==========================================
+//     await db.query(
+//       `INSERT INTO bookings
+//        (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, number_of_rooms, booking_status)
+//        VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed')`,
+//       [hotel_id, room_id, guest_name, guest_phone, check_in, check_out, number_of_rooms]
+//     );
+
+//     await db.query("COMMIT"); // Release the lock and save!
+
+//     res.json({ message: "Booking confirmed successfully!" });
+
+//   } catch (err) {
+//     await db.query("ROLLBACK"); // Release the lock and undo on error
+//     console.error("Booking Error:", err);
+//     res.status(500).json({ message: "Server error during booking" });
+//   }
+// });
+// GUEST BOOKING LOOKUP
+
+
+
 app.post("/api/bookings", async (req, res) => {
-  const {
-    hotel_id,
-    room_id,
-    guest_name,
-    guest_phone,
-    check_in,
-    check_out,
-    number_of_rooms = 1
-  } = req.body;
+  const { hotel_id, room_id, guest_name, guest_phone, check_in, check_out, number_of_rooms = 1 } = req.body;
 
   if (!check_in || !check_out) {
     return res.status(400).json({ message: "Check-in and check-out dates are required." });
@@ -104,11 +182,6 @@ app.post("/api/bookings", async (req, res) => {
   try {
     await db.query("BEGIN"); // Start transaction
 
-    // ==========================================
-    // STEP 1: LOCK THE ROOM ROW (The Fix!)
-    // ==========================================
-    // We lock the parent room row. No other transaction can read or update this 
-    // specific room's availability until we COMMIT or ROLLBACK.
     const roomCheck = await db.query(
       "SELECT total_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2 FOR UPDATE",
       [room_id, hotel_id]
@@ -121,58 +194,77 @@ app.post("/api/bookings", async (req, res) => {
 
     const totalRooms = roomCheck.rows[0].total_rooms;
 
-    // ==========================================
-    // STEP 2: CALCULATE OVERLAPPING DATES 
-    // ==========================================
-    // Removed FOR UPDATE from here. It's safe to run because we already locked the room.
     const overlapCheck = await db.query(
       `SELECT SUM(number_of_rooms) as booked_count 
        FROM bookings 
-       WHERE room_id = $1 
-         AND booking_status = 'confirmed'
-         AND check_in_date < $3 
-         AND check_out_date > $2`,
+       WHERE room_id = $1 AND booking_status = 'confirmed' AND check_in_date < $3 AND check_out_date > $2`,
       [room_id, check_in, check_out]
     );
 
     const currentlyBooked = parseInt(overlapCheck.rows[0].booked_count) || 0;
-    
-    // ==========================================
-    // STEP 3: ENFORCE CAPACITY
-    // ==========================================
     const actualAvailable = totalRooms - currentlyBooked;
 
-    if (actualAvailable <= 0) {
+    if (actualAvailable <= 0 || number_of_rooms > actualAvailable) {
       await db.query("ROLLBACK");
-      return res.status(400).json({ message: "No rooms available for these dates." });
+      return res.status(400).json({ message: "Not enough rooms available for these dates." });
     }
 
-    if (number_of_rooms > actualAvailable) {
-      await db.query("ROLLBACK");
-      return res.status(400).json({ message: `Only ${actualAvailable} room(s) available for these dates.` });
-    }
+    // --- NEW: GENERATE THE FAKE PAYMENT ID & REAL BOOKING REF ---
+    const fakeTxnId = 'TXN-' + Math.random().toString(16).slice(2, 8).toUpperCase();
+    const bookingRef = 'BK-' + Math.random().toString(36).substring(2, 8).toUpperCase();
 
-    // ==========================================
-    // STEP 4: INSERT BOOKING
-    // ==========================================
-    await db.query(
+    // --- NEW: INSERT WITH THE NEW COLUMNS ---
+    const bookingResult = await db.query(
       `INSERT INTO bookings
-       (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, number_of_rooms, booking_status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed')`,
-      [hotel_id, room_id, guest_name, guest_phone, check_in, check_out, number_of_rooms]
+       (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, number_of_rooms, booking_status, payment_status, transaction_id, booking_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', 'paid', $8, $9)
+       RETURNING booking_ref`,
+      [hotel_id, room_id, guest_name, guest_phone, check_in, check_out, number_of_rooms, fakeTxnId, bookingRef]
     );
 
-    await db.query("COMMIT"); // Release the lock and save!
+    await db.query("COMMIT");
 
-    res.json({ message: "Booking confirmed successfully!" });
+    // Send the reference back to React
+    res.json({ 
+      message: "Booking confirmed successfully!",
+      booking_ref: bookingResult.rows[0].booking_ref 
+    });
 
   } catch (err) {
-    await db.query("ROLLBACK"); // Release the lock and undo on error
+    await db.query("ROLLBACK"); 
     console.error("Booking Error:", err);
     res.status(500).json({ message: "Server error during booking" });
   }
 });
+app.post("/api/guest/lookup-booking", async (req, res) => {
+  const { booking_ref, guest_phone } = req.body;
 
+  if (!booking_ref || !guest_phone) {
+    return res.status(400).json({ message: "Reference and Phone are required." });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT b.booking_ref, b.guest_name, b.check_in_date, b.check_out_date, 
+              b.booking_status, b.number_of_rooms, r.room_type, r.price_per_night,
+              h.hotel_name
+       FROM bookings b
+       JOIN rooms r ON b.room_id = r.room_id
+       JOIN hotels h ON b.hotel_id = h.hotel_id
+       WHERE b.booking_ref = $1 AND b.guest_phone = $2`,
+      [booking_ref.trim(), guest_phone.trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "No booking found with these details." });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error looking up booking." });
+  }
+});
 app.post("/api/hotels/register", upload.single('license_file'), async (req, res) => {
   const {
     hotel_name,
@@ -651,91 +743,7 @@ app.get("/api/staff/bookings", verifyToken , async (req, res) => {
   }
 });
 
-// app.get("/api/staff/analytics", verifyToken, async (req, res) => {
-//   const hotel_id = req.user.hotel_id;
 
-//   if (!hotel_id) {
-//     return res.status(400).json({ message: "hotel_id is required" });
-//   }
-
-//   try {
-//     // 1️⃣ Confirmed bookings count
-//     const confirmedBookings = await db.query(
-//       `SELECT COUNT(*) 
-//        FROM bookings 
-//        WHERE hotel_id = $1 AND booking_status = 'confirmed'`,
-//       [hotel_id]
-//     );
-
-//     // 2️⃣ Cancelled bookings count
-//     const cancelledBookings = await db.query(
-//       `SELECT COUNT(*) 
-//        FROM bookings 
-//        WHERE hotel_id = $1 AND booking_status = 'cancelled'`,
-//       [hotel_id]
-//     );
-
-//     // 3️⃣ Total Revenue (confirmed bookings only)
-//     const revenue = await db.query(
-//       `SELECT COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) AS revenue
-//        FROM bookings b
-//        JOIN rooms r ON b.room_id = r.room_id
-//        WHERE b.hotel_id = $1
-//          AND b.booking_status = 'confirmed'`,
-//       [hotel_id]
-//     );
-
-//     // 4️⃣ Most popular room (confirmed only)
-//     const popularRoom = await db.query(
-//       `SELECT r.room_type, COUNT(*) AS count
-//        FROM bookings b
-//        JOIN rooms r ON b.room_id = r.room_id
-//        WHERE b.hotel_id = $1
-//          AND b.booking_status = 'confirmed'
-//        GROUP BY r.room_type
-//        ORDER BY count DESC
-//        LIMIT 1`,
-//       [hotel_id]
-//     );
-
-//     // 5️⃣ NEW: Revenue Trend (Last 30 Days Grouped by Date)
-//     const revenueTrend = await db.query(
-//       `SELECT 
-//          TO_CHAR(b.created_at, 'Mon DD') as date,
-//          COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) as daily_revenue
-//        FROM bookings b
-//        JOIN rooms r ON b.room_id = r.room_id
-//        WHERE b.hotel_id = $1
-//          AND b.booking_status = 'confirmed'
-//          AND b.created_at >= NOW() - INTERVAL '30 days'
-//        GROUP BY TO_CHAR(b.created_at, 'Mon DD'), DATE(b.created_at)
-//        ORDER BY DATE(b.created_at) ASC`,
-//       [hotel_id]
-//     );
-
-
-
-
-
-//     res.json({
-//       confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
-//       cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
-//       total_revenue: parseInt(revenue.rows[0].revenue),
-//       most_popular_room: popularRoom.rows[0] || null,
-//       revenue_trend: revenueTrend.rows // Sent to frontend for the chart
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Server error generating analytics" });
-//   }
-// });
-
-// ==========================================
-// MASTER ANALYTICS ROUTE
-// ==========================================
-// ==========================================
-// MASTER ANALYTICS ROUTE
 // ==========================================
 app.get("/api/staff/analytics", verifyToken, async (req, res) => {
   const hotel_id = req.user.hotel_id;
@@ -1046,60 +1054,117 @@ app.get("/api/staff/queries/summary", verifyToken,async (req, res) => {
   }
 });
 
-app.patch("/api/bookings/:booking_id/cancel", async (req, res) => {
-  const { booking_id } = req.params;
+// app.patch("/api/bookings/:booking_id/cancel", async (req, res) => {
+//   const { booking_id } = req.params;
 
-  try {
-    // Fetch booking details
-    const bookingResult = await db.query(
-      `SELECT room_id, booking_status
-       FROM bookings
-       WHERE booking_id = $1`,
-      [booking_id]
-    );
+//   try {
+//     // Fetch booking details
+//     const bookingResult = await db.query(
+//       `SELECT room_id, booking_status
+//        FROM bookings
+//        WHERE booking_id = $1`,
+//       [booking_id]
+//     );
 
-    if (bookingResult.rows.length === 0) {
-      return res.status(404).json({ message: "Booking not found" });
-    }
+//     if (bookingResult.rows.length === 0) {
+//       return res.status(404).json({ message: "Booking not found" });
+//     }
 
-    const booking = bookingResult.rows[0];
+//     const booking = bookingResult.rows[0];
 
-    // if (booking.bookingstatus === "checked_in") {
-    //   return res.status(400).json({ message: "Cannot cancel checked-in booking" });
-    // }
+//     // if (booking.bookingstatus === "checked_in") {
+//     //   return res.status(400).json({ message: "Cannot cancel checked-in booking" });
+//     // }
 
 
-// changed status to booking_status
+// // changed status to booking_status
 
-    if (booking.booking_status === "cancelled") {
-      return res.status(400).json({ message: "Booking already cancelled" });
-    }
+//     if (booking.booking_status === "cancelled") {
+//       return res.status(400).json({ message: "Booking already cancelled" });
+//     }
 
-    // Start transaction
-    await db.query("BEGIN");
+//     // Start transaction
+//     await db.query("BEGIN");
 
-    // Update booking status
-    await db.query(
-      `UPDATE bookings
-       SET booking_status = 'cancelled'
-       WHERE booking_id = $1`,
-      [booking_id]
-    );
+//     // Update booking status
+//     await db.query(
+//       `UPDATE bookings
+//        SET booking_status = 'cancelled'
+//        WHERE booking_id = $1`,
+//       [booking_id]
+//     );
 
-    // Increase available rooms
+//     // Increase available rooms
   
 
-    await db.query("COMMIT");
+//     await db.query("COMMIT");
 
-    res.json({ message: "Booking cancelled successfully" });
+//     res.json({ message: "Booking cancelled successfully" });
 
+//   } catch (err) {
+//     await db.query("ROLLBACK");
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+
+// ==========================================
+// GUEST: CANCEL BOOKING
+// ==========================================
+app.post("/api/guest/cancel-booking", async (req, res) => {
+  const { booking_ref, guest_phone } = req.body;
+
+  if (!booking_ref || !guest_phone) {
+    return res.status(400).json({ message: "Reference and Phone are required." });
+  }
+
+  try {
+    // 1. Find the exact booking
+    const result = await db.query(
+      `SELECT booking_id, booking_status, created_at 
+       FROM bookings 
+       WHERE booking_ref = $1 AND guest_phone = $2`,
+      [booking_ref.trim(), guest_phone.trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Booking not found. Please check your details." });
+    }
+
+    const booking = result.rows[0];
+
+    // 2. Prevent double cancellations
+    if (booking.booking_status === 'cancelled') {
+      return res.status(400).json({ message: "This booking is already cancelled." });
+    }
+
+    // 3. Time Restriction Logic (e.g., 24-hour grace period)
+    const now = new Date();
+    const bookingTime = new Date(booking.created_at);
+    const hoursDifference = (now - bookingTime) / (1000 * 60 * 60);
+
+    // Set to 24 hours. You can change this number to 2 or 4 if you want a stricter policy!
+    const MAX_CANCELLATION_HOURS = 24; 
+
+    if (hoursDifference > MAX_CANCELLATION_HOURS) {
+      return res.status(400).json({ 
+        message: `Cancellation period expired. You can only cancel within the first ${MAX_CANCELLATION_HOURS} hours.` 
+      });
+    }
+
+    // 4. Update the status to 'cancelled'
+    await db.query(
+      `UPDATE bookings SET booking_status = 'cancelled' WHERE booking_id = $1`,
+      [booking.booking_id]
+    );
+
+    res.json({ message: "Booking successfully cancelled. The room has been released." });
   } catch (err) {
-    await db.query("ROLLBACK");
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error during cancellation." });
   }
 });
-
 app.get("/api/pricing/recommendations", verifyToken, async (req, res) => {
   const hotelId = req.user.hotel_id;
   const daysAhead = parseInt(req.query.days) || 7;

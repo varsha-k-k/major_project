@@ -568,6 +568,14 @@ function HotelPage() {
     children: 0
   });
 
+  // 4. Payment Simulation State
+  const [showPayment, setShowPayment] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+// Manage Booking States
+  const [showLookup, setShowLookup] = useState(false);
+  const [lookupRef, setLookupRef] = useState("");
+  const [lookupPhone, setLookupPhone] = useState("");
+  const [foundBooking, setFoundBooking] = useState(null);
   // lightbox state (room id + photo index)
   const [lightbox, setLightbox] = useState({ roomId: null, index: 0 });
 
@@ -602,9 +610,45 @@ function HotelPage() {
     const { name, value } = e.target;
     setBookingDetails(prev => ({ ...prev, [name]: value }));
   };
+const handleLookupBooking = async () => {
+    try {
+      const res = await axios.post("http://localhost:3000/api/guest/lookup-booking", {
+        booking_ref: lookupRef,
+        guest_phone: lookupPhone
+      });
+      setFoundBooking(res.data);
+    } catch (err) {
+      alert("❌ " + (err.response?.data?.message || "Booking not found."));
+      setFoundBooking(null);
+    }
+  };
 
+  const handleCancelBooking = async () => {
+    // Double check with the user before destroying their booking
+    if (!window.confirm("Are you sure you want to cancel your booking? This cannot be undone.")) {
+      return;
+    }
+
+    try {
+      await axios.post("http://localhost:3000/api/guest/cancel-booking", {
+        booking_ref: foundBooking.booking_ref,
+        guest_phone: lookupPhone // We reuse the phone number they typed into the lookup input
+      });
+      
+      alert("✅ Booking cancelled successfully.");
+      
+      // Refresh the lookup receipt so it turns RED and says "CANCELLED"
+      handleLookupBooking(); 
+      
+      // Refresh the hotel availability so the calendar immediately shows the room as free again!
+      fetchHotelData(); 
+
+    } catch (err) {
+      alert("❌ " + (err.response?.data?.message || "Failed to cancel booking."));
+    }
+  };
   // Submits the actual booking
-  const submitBooking = async () => {
+const processRealBooking = async () => {
     if (!checkIn || !checkOut) {
       alert("Please select both Check-In and Check-Out dates at the top of the page.");
       return;
@@ -615,7 +659,8 @@ function HotelPage() {
     }
 
     try {
-      await axios.post("http://localhost:3000/api/bookings", {
+      // FIX: Added "const res = " so we can capture the server's response!
+      const res = await axios.post("http://localhost:3000/api/bookings", {
         hotel_id: hotel.hotel_id,
         room_id: selectedRoomId,
         guest_name: bookingDetails.guestName,
@@ -623,20 +668,43 @@ function HotelPage() {
         check_in: checkIn,
         check_out: checkOut,
         number_of_rooms: bookingDetails.numRooms,
-        // Note: You can pass adults/children here if you update your backend later
-        // adults: bookingDetails.adults,
-        // children: bookingDetails.children
       });
       
-      alert("✅ Booking Confirmed!");
-      setSelectedRoomId(null); // Close the form
-      setBookingDetails({ guestName: "", guestPhone: "", numRooms: 1, adults: 2, children: 0 }); // Reset
+      // FIX: Cleaned up the broken alert string
+      alert(`✅ Booking Confirmed!\n\nYour Reference is: ${res.data.booking_ref}\n\nPlease save this to manage your booking later.`);
+      
+      setSelectedRoomId(null); 
+      setBookingDetails({ guestName: "", guestPhone: "", numRooms: 1, adults: 2, children: 0 }); 
+      
+      // Hide the payment modal and stop the spinner
+      setShowPayment(false); 
+      setIsProcessing(false);
+      
       fetchHotelData(); // Refresh availability
+
     } catch (err) {
+      setIsProcessing(false); // Stop spinner if it fails
       alert("❌ Booking Failed: " + (err.response?.data?.message || err.message));
     }
   };
 
+  const handleProceedToPayment = () => {
+    if (!checkIn || !checkOut || !bookingDetails.guestName || !bookingDetails.guestPhone) {
+      alert("Please fill in all details.");
+      return;
+    }
+    // Open the fake payment modal
+    setShowPayment(true);
+  };
+
+  const handleSimulatePayment = () => {
+    setIsProcessing(true); // Start the loading spinner
+    
+    // Wait exactly 2.5 seconds to make it feel real, then book the room
+    setTimeout(() => {
+      processRealBooking();
+    }, 2500); 
+  };
   const handleSendMessage = async () => {
     if (!chatInput.trim()) return;
     
@@ -664,6 +732,12 @@ function HotelPage() {
       
       {/* WHITE-LABEL HERO SECTION */}
       <header style={{ backgroundColor: "#1f2937", color: "white", padding: "60px 20px", textAlign: "center" }}>
+        <button 
+          onClick={() => setShowLookup(true)}
+          style={{ position: "absolute", top: "20px", right: "20px", background: "transparent", color: "white", border: "1px solid white", padding: "8px 16px", borderRadius: "6px", cursor: "pointer" }}
+        >
+          🔍 Manage Booking
+        </button>
         <h1 style={{ fontSize: "48px", margin: "0 0 10px 0" }}>{hotel.hotel_name}</h1>
         <p style={{ fontSize: "18px", color: "#9ca3af", margin: "0" }}>📍 {hotel.location} | {hotel.address}</p>
       </header>
@@ -800,7 +874,7 @@ function HotelPage() {
 
                   <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
                     <button onClick={() => setSelectedRoomId(null)} style={secondaryButtonStyle}>Cancel</button>
-                    <button onClick={submitBooking} style={{...primaryButtonStyle, padding: "12px 32px"}}>Confirm Booking</button>
+                   <button onClick={handleProceedToPayment} style={{...primaryButtonStyle, padding: "12px 32px"}}>Confirm Booking</button>
                   </div>
                 </div>
               )}            </div>
@@ -874,6 +948,92 @@ function HotelPage() {
           </button>
         )}
       </div>
+{/* SIMULATED PAYMENT MODAL */}
+      {showPayment && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}>
+          <div style={{ backgroundColor: "white", padding: "30px", borderRadius: "12px", width: "400px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)" }}>
+            
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ margin: 0 }}>Secure Checkout</h3>
+              {!isProcessing && <button onClick={() => setShowPayment(false)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: "18px" }}>❌</button>}
+            </div>
+
+            <div style={{ backgroundColor: "#f3f4f6", padding: "15px", borderRadius: "8px", marginBottom: "20px", textAlign: "center" }}>
+              <p style={{ margin: 0, color: "#6b7280", fontSize: "14px" }}>Total Amount Due</p>
+              {/* In a real app, you would calculate Price * Nights * Rooms here */}
+              <h2 style={{ margin: "5px 0 0 0", color: "#111827" }}>Proceed to Pay</h2> 
+            </div>
+
+            <label style={labelStyle}>Card Number (Simulated)</label>
+            <input type="text" placeholder="XXXX XXXX XXXX XXXX" defaultValue="4242 4242 4242 4242" disabled={isProcessing} style={{...inputStyle, width: "100%", marginBottom: "15px", fontFamily: "monospace"}} />
+            
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px", marginBottom: "24px" }}>
+              <div>
+                <label style={labelStyle}>Expiry</label>
+                <input type="text" placeholder="MM/YY" defaultValue="12/26" disabled={isProcessing} style={{...inputStyle, width: "100%"}} />
+              </div>
+              <div>
+                <label style={labelStyle}>CVV</label>
+                <input type="password" placeholder="123" defaultValue="123" disabled={isProcessing} style={{...inputStyle, width: "100%"}} />
+              </div>
+            </div>
+
+            <button 
+              onClick={handleSimulatePayment} 
+              disabled={isProcessing}
+              style={{ ...primaryButtonStyle, width: "100%", padding: "14px", backgroundColor: isProcessing ? "#9ca3af" : "#10b981", fontSize: "16px" }}
+            >
+              {isProcessing ? "🔄 Processing Payment..." : "🔒 Pay Securely"}
+            </button>
+            <p style={{ textAlign: "center", fontSize: "12px", color: "#9ca3af", marginTop: "15px" }}>
+              Test Mode • No real money will be charged
+            </p>
+          </div>
+        </div>
+      )}
+      {/* LOOKUP BOOKING MODAL */}
+      {showLookup && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 }}>
+          <div style={{ backgroundColor: "white", padding: "30px", borderRadius: "12px", width: "400px", maxWidth: "90%" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ margin: 0 }}>Find Your Booking</h3>
+              <button onClick={() => {setShowLookup(false); setFoundBooking(null);}} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "18px" }}>❌</button>
+            </div>
+
+            {!foundBooking ? (
+              <div>
+                <label style={labelStyle}>Booking Reference (e.g., BK-123456)</label>
+                <input type="text" value={lookupRef} onChange={e => setLookupRef(e.target.value)} style={{...inputStyle, width: "100%", marginBottom: "15px"}} />
+                
+                <label style={labelStyle}>Phone Number</label>
+                <input type="text" value={lookupPhone} onChange={e => setLookupPhone(e.target.value)} style={{...inputStyle, width: "100%", marginBottom: "20px"}} />
+                
+                <button onClick={handleLookupBooking} style={{...primaryButtonStyle, width: "100%"}}>Search</button>
+              </div>
+            ) : (
+              <div style={{ backgroundColor: "#f9fafb", padding: "20px", borderRadius: "8px" }}>
+                <h4 style={{ margin: "0 0 15px 0", color: "#111827" }}>Booking Receipt</h4>
+                <p><strong>Status:</strong> <span style={{ color: foundBooking.booking_status === 'confirmed' ? 'green' : 'red' }}>{foundBooking.booking_status.toUpperCase()}</span></p>
+                <p><strong>Guest:</strong> {foundBooking.guest_name}</p>
+                <p><strong>Room:</strong> {foundBooking.room_type} ({foundBooking.number_of_rooms} room/s)</p>
+                <p><strong>Check-in:</strong> {new Date(foundBooking.check_in_date).toLocaleDateString()}</p>
+                <p><strong>Check-out:</strong> {new Date(foundBooking.check_out_date).toLocaleDateString()}</p>
+                {foundBooking.booking_status === 'confirmed' && (
+                  <button 
+                    onClick={handleCancelBooking} 
+                    style={{...secondaryButtonStyle, width: "100%", marginTop: "15px", color: "#dc2626", borderColor: "#fca5a5", backgroundColor: "#fef2f2"}}
+                  >
+                    ⚠️ Cancel Booking
+                  </button>
+                )}
+
+                <button onClick={() => setFoundBooking(null)} style={{...secondaryButtonStyle, width: "100%", marginTop: "10px"}}>Close Receipt</button>
+                <button onClick={() => setFoundBooking(null)} style={{...secondaryButtonStyle, width: "100%", marginTop: "15px"}}>Back to Search</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
