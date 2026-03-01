@@ -30,104 +30,179 @@ function sleep(ms) {
 }
 
 // --- RULE-BASED RESPONSES (no API needed) ---
+// function getRuleBasedResponse(query, hotelContext) {
+//   const normalized = query.trim().toLowerCase();
+
+//   // ✅ BOOKING WITH DETAILS (highest priority)
+//   // Pattern: "DELUXE 17-02-2026 2 NIGHTS" or "book deluxe room for 17-02-2026 2 nights"
+//   if (hotelContext && hotelContext.rooms) {
+//     // Try to extract booking details
+//     const datePattern = /(\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/;
+//     const nightsPattern = /(\d+)\s*nights?/i;
+//     const dateMatch = query.match(datePattern);
+//     const nightsMatch = query.match(nightsPattern);
+
+//     // Find room type mentioned
+//     let roomType = null;
+//     for (const room of hotelContext.rooms) {
+//       if (normalized.includes(room.type.toLowerCase())) {
+//         roomType = room.type;
+//         break;
+//       }
+//     }
+
+//     // If we found room type AND (date OR nights), it's a booking request
+//     if (roomType && (dateMatch || nightsMatch)) {
+//       const checkInDate = dateMatch ? dateMatch[1] : "TBD";
+//       const nights = nightsMatch ? nightsMatch[1] : "TBD";
+//       return {
+//         intent: "booking_details_received",
+//         response: `Great! I have these booking details:\n• Room Type: ${roomType}\n• Check-in: ${checkInDate}\n• Nights: ${nights}\n\nPlease confirm your full name and phone number to complete the booking.`,
+//         bookingDetails: {
+//           room_type: roomType,
+//           check_in_date: checkInDate,
+//           nights: nights
+//         }
+//       };
+//     }
+
+//     // ✅ NAME AND PHONE CONFIRMATION (high priority)
+//     // Pattern: "NAME PHONENUMBER" like "RAMAN 9876543210" or "John Doe, 9876543210"
+//     const phonePattern = /(\d{10}|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})/;
+//     const phoneMatch = query.match(phonePattern);
+//     if (phoneMatch) {
+//       // Extract name (everything before phone or comma)
+//       const nameMatch = query.match(/^([a-zA-Z\s]+)/);
+//       const guestName = nameMatch ? nameMatch[1].trim() : null;
+      
+//       if (guestName && guestName.length > 2) {
+//         return {
+//           intent: "booking_confirmation_ready",
+//           response: `Perfect! I have your contact details:\n• Name: ${guestName}\n• Phone: ${phoneMatch[0]}\n\nYour booking will be confirmed shortly. Thank you!`,
+//           guestDetails: {
+//             name: guestName,
+//             phone: phoneMatch[0]
+//           }
+//         };
+//       }
+//     }
+
+//     // Price queries with specific room type
+//     const priceKeywords = ["price", "cost", "rate", "how much", "charge"];
+//     for (const room of hotelContext.rooms) {
+//       const roomName = (room.type || "").toLowerCase();
+//       if (roomName && normalized.includes(roomName) && priceKeywords.some(k => normalized.includes(k))) {
+//         return {
+//           intent: "pricing",
+//           response: `The ${room.type} room costs ₹${room.price} per night. We have ${room.available} rooms available. Would you like to book?`
+//         };
+//       }
+//     }
+
+//     // General availability check
+//     if (normalized.includes("available") || (normalized.includes("room") && normalized.includes("have"))) {
+//       const availableCount = hotelContext.rooms.reduce((sum, r) => sum + r.available, 0);
+//       return {
+//         intent: "availability",
+//         response: `We have ${availableCount} rooms available across our ${hotelContext.rooms.length} room types. Our rates range from ₹${Math.min(...hotelContext.rooms.map(r => r.price))} to ₹${Math.max(...hotelContext.rooms.map(r => r.price))} per night.`
+//       };
+//     }
+//   }
+
+//   // Booking intent (generic, no details yet)
+//   if (normalized.includes("book") || normalized.includes("reserve")) {
+//     return {
+//       intent: "booking",
+//       response: "I'd be happy to help you book a room! Please tell me: 1) Your preferred room type, 2) Check-in date (DD-MM-YYYY), and 3) How many nights."
+//     };
+//   }
+
+//   // Welcome
+//   if (normalized.includes("hello") || normalized.includes("hi") || normalized.includes("help")) {
+//     return {
+//       intent: "greeting",
+//       response: "Hello! I'm your hotel assistant. I can help you with room availability, pricing, bookings, and other inquiries. How can I assist you?"
+//     };
+//   }
+
+//   return null; // No rule matched
+// }
+
 function getRuleBasedResponse(query, hotelContext) {
   const normalized = query.trim().toLowerCase();
 
-  // ✅ BOOKING WITH DETAILS (highest priority)
-  // Pattern: "DELUXE 17-02-2026 2 NIGHTS" or "book deluxe room for 17-02-2026 2 nights"
-  if (hotelContext && hotelContext.rooms) {
-    // Try to extract booking details
-    const datePattern = /(\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/;
-    const nightsPattern = /(\d+)\s*nights?/i;
-    const dateMatch = query.match(datePattern);
-    const nightsMatch = query.match(nightsPattern);
+  if (!hotelContext || !hotelContext.rooms) return null;
 
-    // Find room type mentioned
-    let roomType = null;
-    for (const room of hotelContext.rooms) {
-      if (normalized.includes(room.type.toLowerCase())) {
-        roomType = room.type;
-        break;
-      }
-    }
+  const datesInfo = `(Selected Dates: ${hotelContext.target_check_in} to ${hotelContext.target_check_out})`;
 
-    // If we found room type AND (date OR nights), it's a booking request
-    if (roomType && (dateMatch || nightsMatch)) {
-      const checkInDate = dateMatch ? dateMatch[1] : "TBD";
-      const nights = nightsMatch ? nightsMatch[1] : "TBD";
+  // ✅ NAME AND PHONE CONFIRMATION (Completes the booking)
+  const phonePattern = /(\d{10}|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})/;
+  const phoneMatch = query.match(phonePattern);
+  if (phoneMatch) {
+    const nameMatch = query.match(/^([a-zA-Z\s]+)/);
+    const guestName = nameMatch ? nameMatch[1].trim() : null;
+    
+    if (guestName && guestName.length > 2) {
       return {
-        intent: "booking_details_received",
-        response: `Great! I have these booking details:\n• Room Type: ${roomType}\n• Check-in: ${checkInDate}\n• Nights: ${nights}\n\nPlease confirm your full name and phone number to complete the booking.`,
-        bookingDetails: {
-          room_type: roomType,
-          check_in_date: checkInDate,
-          nights: nights
-        }
-      };
-    }
-
-    // ✅ NAME AND PHONE CONFIRMATION (high priority)
-    // Pattern: "NAME PHONENUMBER" like "RAMAN 9876543210" or "John Doe, 9876543210"
-    const phonePattern = /(\d{10}|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})/;
-    const phoneMatch = query.match(phonePattern);
-    if (phoneMatch) {
-      // Extract name (everything before phone or comma)
-      const nameMatch = query.match(/^([a-zA-Z\s]+)/);
-      const guestName = nameMatch ? nameMatch[1].trim() : null;
-      
-      if (guestName && guestName.length > 2) {
-        return {
-          intent: "booking_confirmation_ready",
-          response: `Perfect! I have your contact details:\n• Name: ${guestName}\n• Phone: ${phoneMatch[0]}\n\nYour booking will be confirmed shortly. Thank you!`,
-          guestDetails: {
-            name: guestName,
-            phone: phoneMatch[0]
-          }
-        };
-      }
-    }
-
-    // Price queries with specific room type
-    const priceKeywords = ["price", "cost", "rate", "how much", "charge"];
-    for (const room of hotelContext.rooms) {
-      const roomName = (room.type || "").toLowerCase();
-      if (roomName && normalized.includes(roomName) && priceKeywords.some(k => normalized.includes(k))) {
-        return {
-          intent: "pricing",
-          response: `The ${room.type} room costs ₹${room.price} per night. We have ${room.available} rooms available. Would you like to book?`
-        };
-      }
-    }
-
-    // General availability check
-    if (normalized.includes("available") || (normalized.includes("room") && normalized.includes("have"))) {
-      const availableCount = hotelContext.rooms.reduce((sum, r) => sum + r.available, 0);
-      return {
-        intent: "availability",
-        response: `We have ${availableCount} rooms available across our ${hotelContext.rooms.length} room types. Our rates range from ₹${Math.min(...hotelContext.rooms.map(r => r.price))} to ₹${Math.max(...hotelContext.rooms.map(r => r.price))} per night.`
+        intent: "booking_confirmation_ready",
+        response: `Perfect! Processing your reservation now...`,
+        guestDetails: { name: guestName, phone: phoneMatch[0] }
       };
     }
   }
 
-  // Booking intent (generic, no details yet)
-  if (normalized.includes("book") || normalized.includes("reserve")) {
+  // ✅ ROOM SELECTION (Starts the booking)
+  let selectedRoom = null;
+  for (const room of hotelContext.rooms) {
+    if (normalized.includes(room.type.toLowerCase())) {
+      selectedRoom = room;
+      break;
+    }
+  }
+
+  // If they mention a room AND "book", ask for details
+  if (selectedRoom && (normalized.includes("book") || normalized.includes("reserve"))) {
+    if (selectedRoom.available <= 0) {
+      return {
+        intent: "booking_failed",
+        response: `I'm so sorry, but the ${selectedRoom.type} is fully booked for your selected dates ${datesInfo}. Please select a different date or room type.`
+      };
+    }
+
     return {
-      intent: "booking",
-      response: "I'd be happy to help you book a room! Please tell me: 1) Your preferred room type, 2) Check-in date (DD-MM-YYYY), and 3) How many nights."
+      intent: "booking_details_received",
+      response: `Excellent choice! You've selected the ${selectedRoom.type} room ${datesInfo}. The dynamically adjusted price for these dates is ₹${selectedRoom.price} per night.\n\nPlease reply with your FULL NAME and PHONE NUMBER to secure this booking.`,
+      bookingDetails: {
+        room_type: selectedRoom.type,
+        check_in_date: hotelContext.target_check_in,
+        nights: "Selected via calendar"
+      }
     };
   }
 
-  // Welcome
-  if (normalized.includes("hello") || normalized.includes("hi") || normalized.includes("help")) {
+  // ✅ PRICING QUERIES
+  const priceKeywords = ["price", "cost", "rate", "how much", "charge"];
+  if (selectedRoom && priceKeywords.some(k => normalized.includes(k))) {
     return {
-      intent: "greeting",
-      response: "Hello! I'm your hotel assistant. I can help you with room availability, pricing, bookings, and other inquiries. How can I assist you?"
+      intent: "pricing",
+      response: `Based on your selected dates ${datesInfo}, the ${selectedRoom.type} room is currently ₹${selectedRoom.price} per night. We have ${selectedRoom.available} available. Would you like to book it?`
     };
   }
 
-  return null; // No rule matched
+  // ✅ GENERAL AVAILABILITY
+  if (normalized.includes("available") || (normalized.includes("room") && normalized.includes("have"))) {
+    const availableRoomsText = hotelContext.rooms
+      .map(r => `• ${r.type}: ${r.available > 0 ? `₹${r.price}/night` : 'Sold Out'}`)
+      .join("\n");
+
+    return {
+      intent: "availability",
+      response: `Here is our live availability for your selected dates ${datesInfo}:\n${availableRoomsText}\n\nWhich room would you like to book?`
+    };
+  }
+
+  return null;
 }
-
 // --- MAIN FUNCTION ---
 export async function processGuestQuery(query, hotelContext = null, db = null, history = []) {
   const normalized = query.trim().toLowerCase();

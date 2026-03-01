@@ -48,6 +48,7 @@ function PricingOptimizer() {
       alert("✅ Price applied successfully!");
 
       // TWEAK 4: Removed setTimeout anti-pattern
+
       await fetchRecommendations();
     } catch (err) {
       alert("❌ Failed to apply price: " + err.message);

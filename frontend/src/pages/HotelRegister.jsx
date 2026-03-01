@@ -13,7 +13,6 @@ function HotelRegister() {
     contact_phone: "",
     contact_email: "",
     description: "",
-    languages_supported: "",
     staff_name: "",
     staff_email: "",
     staff_password: "",
@@ -27,7 +26,6 @@ function HotelRegister() {
       [name]: type === 'file' ? files[0] : value
     });
   };
-
   const handleSubmit = async () => {
 
     try {
@@ -162,19 +160,6 @@ function HotelRegister() {
         }}
       />
 
-      <input 
-        name="languages_supported" 
-        placeholder="Languages Supported (e.g., English, Spanish)" 
-        onChange={handleChange}
-        style={{
-          width: "100%",
-          padding: "12px",
-          marginBottom: "15px",
-          border: "1px solid #ddd",
-          borderRadius: "4px",
-          boxSizing: "border-box"
-        }}
-      />
 
       <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Hotel License Document:</label>
       <input 

@@ -52,12 +52,24 @@ function HotelSearch() {
               border: "1px solid #ccc",
               padding: "15px",
               marginBottom: "10px",
-              cursor: "pointer"
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "15px"
             }}
             onClick={() => navigate(`/hotel/${hotel.slug}`)}
           >
-            <h3>{hotel.hotel_name}</h3>
-            <p>{hotel.location}</p>
+            {hotel.preview_image && (
+              <img
+                src={hotel.preview_image}
+                alt="Hotel preview"
+                style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }}
+              />
+            )}
+            <div>
+              <h3 style={{ margin: 0 }}>{hotel.hotel_name}</h3>
+              <p style={{ margin: 0 }}>{hotel.location}</p>
+            </div>
           </div>
         ))}
       </div>

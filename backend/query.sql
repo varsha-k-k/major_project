@@ -6,7 +6,6 @@ CREATE TABLE hotels (
     contact_phone VARCHAR(20),
     contact_email VARCHAR(150),
     description TEXT,
-    languages_supported TEXT[],  -- e.g. {'English','Malayalam'}
     slug VARCHAR(200) UNIQUE,    -- for clean URLs
     license_file_path TEXT,      -- path to uploaded license file
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

@@ -568,6 +568,10 @@ function HotelPage() {
     children: 0
   });
 
+  // lightbox state (room id + photo index)
+  const [lightbox, setLightbox] = useState({ roomId: null, index: 0 });
+
+
   // 3. AI Chatbot State
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -694,8 +698,13 @@ function HotelPage() {
                   <p style={{ margin: 0, color: "#4b5563" }}>
                     <span style={{ fontSize: "24px", fontWeight: "bold", color: "#111827" }}>₹{room.price_per_night}</span> / night
                   </p>
+                  {room.capacity && (
+                    <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#6b7280" }}>
+                      Capacity: {room.capacity} {room.capacity === 1 ? 'person' : 'persons'}
+                    </p>
+                  )}
                 </div>
-                
+
                 {selectedRoomId !== room.room_id && (
                   <button onClick={() => setSelectedRoomId(room.room_id)} style={primaryButtonStyle}>
                     Book Room
@@ -703,12 +712,62 @@ function HotelPage() {
                 )}
               </div>
 
-              {/* INLINE BOOKING FORM (Expands when Book Room is clicked) */}
+              {/* description, amenities and pictures */}
+              {room.description && (
+                <p style={{ margin: "12px 0" }}>{room.description}</p>
+              )}
+              {room.amenities && room.amenities.length > 0 && (
+                <div style={{ margin: "8px 0" }}>
+                  {room.amenities.map((a, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        display: "inline-block",
+                        backgroundColor: "#e5e7eb",
+                        padding: "4px 8px",
+                        borderRadius: "12px",
+                        margin: "0 6px 6px 0",
+                        fontSize: "13px",
+                        color: "#374151"
+                      }}
+                    >{a}</span>
+                  ))}
+                </div>
+              )}
+              {room.pictures && room.pictures.length > 0 && (
+                <div style={{ position: "relative", marginTop: "10px" }}>
+                  <img
+                    src={room.pictures[0].picture_url}
+                    alt="Room"
+                    onClick={() => setLightbox({ roomId: room.room_id, index: 0 })}
+                    style={{
+                      width: "180px",
+                      height: "120px",
+                      objectFit: "cover",
+                      borderRadius: "5px",
+                      cursor: "pointer",
+                      border: "2px solid transparent"
+                    }}
+                  />
+                  {room.pictures.length > 1 && (
+                    <span style={{
+                      position: "absolute",
+                      bottom: "4px",
+                      right: "4px",
+                      backgroundColor: "rgba(0,0,0,0.6)",
+                      color: "white",
+                      padding: "2px 6px",
+                      borderRadius: "12px",
+                      fontSize: "12px",
+                      zIndex: 1
+                    }}>
+                      +{room.pictures.length - 1}
+                    </span>
+                  )}
+                </div>
+              )}
               {selectedRoomId === room.room_id && (
-                <div style={{ marginTop: "24px", paddingTop: "24px", borderTop: "1px solid #e5e7eb" }}>
-                  <h4 style={{ marginTop: 0 }}>Guest Details</h4>
-                  
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "20px" }}>
+                <div style={{ marginTop: "16px" }}>
                     <div>
                       <label style={labelStyle}>Full Name</label>
                       <input type="text" name="guestName" value={bookingDetails.guestName} onChange={handleInputChange} placeholder="John Doe" style={{...inputStyle, width: "100%"}} />
@@ -717,7 +776,6 @@ function HotelPage() {
                       <label style={labelStyle}>Phone Number</label>
                       <input type="tel" name="guestPhone" value={bookingDetails.guestPhone} onChange={handleInputChange} placeholder="+91 9876543210" style={{...inputStyle, width: "100%"}} />
                     </div>
-                  </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "24px" }}>
                     <div>
@@ -745,14 +803,39 @@ function HotelPage() {
                     <button onClick={submitBooking} style={{...primaryButtonStyle, padding: "12px 32px"}}>Confirm Booking</button>
                   </div>
                 </div>
-              )}
-            </div>
+              )}            </div>
           ))}
         </div>
       </main>
 
+      {/* lightbox overlay */}
+      {lightbox.roomId !== null && (() => {
+        const room = rooms.find(r => r.room_id === lightbox.roomId);
+        if (!room) return null;
+        const pics = room.pictures || [];
+        const pic = pics[lightbox.index];
+        return (
+          <div style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            backgroundColor: "rgba(0,0,0,0.8)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 2000
+          }} onClick={() => setLightbox({ roomId: null, index: 0 })}>
+            <button onClick={e => {e.stopPropagation(); setLightbox(prev=>({roomId:prev.roomId,index:(prev.index-1+pics.length)%pics.length}))}} style={{position:"absolute",left:20,fontSize:30,color:"white",background:"none",border:"none",cursor:"pointer"}}>&larr;</button>
+            <img src={pic.picture_url} alt="Large" style={{maxWidth:"90%",maxHeight:"90%",borderRadius:"6px"}} onClick={e=>e.stopPropagation()} />
+            <button onClick={e => {e.stopPropagation(); setLightbox(prev=>({roomId:prev.roomId,index:(prev.index+1)%pics.length}))}} style={{position:"absolute",right:20,fontSize:30,color:"white",background:"none",border:"none",cursor:"pointer"}}>&rarr;</button>
+          </div>
+        );
+      })()}
+
       {/* FLOATING AI CHATBOT WIDGET */}
-      <div style={{ position: "fixed", bottom: "20px", right: "20px", zIndex: 1000 }}>
+      <div style={{ position: "fixed", bottom: "20px", right: "20px", zIndex: 1000 }} >
         {isChatOpen ? (
           <div style={{ width: "350px", height: "500px", backgroundColor: "white", borderRadius: "12px", boxShadow: "0 10px 25px rgba(0,0,0,0.2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ backgroundColor: "#1f2937", color: "white", padding: "16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>

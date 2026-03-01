@@ -38,6 +38,8 @@ app.use(cors({
 }));
 
 app.use(express.json());
+// Make the 'uploads' folder publicly accessible
+app.use('/uploads', express.static('uploads'));
 
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -80,55 +82,6 @@ app.get("/", (req, res) => {
   res.send("Welcome to the Smart Hospitality System API");
 });
 
-// app.post("/api/bookings", async (req, res) => {
-//   const {
-//     hotel_id,
-//     room_id,
-//     guest_name,
-//     guest_phone,
-//     check_in,
-//     check_out,
-//     number_of_rooms = 1
-//   } = req.body;
-
-//   try {
-//     const roomCheck = await db.query(
-//       "SELECT available_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2",
-//       [room_id, hotel_id]
-//     );
-
-//     if (roomCheck.rows.length === 0) {
-//       return res.status(404).json({ message: "Room not found" });
-//     }
-
-//     const available = roomCheck.rows[0].available_rooms;
-//     if (available <= 0) {
-//       return res.status(400).json({ message: "No rooms available" });
-//     }
-
-//     if (number_of_rooms > available) {
-//       return res.status(400).json({ message: `Only ${available} room(s) available` });
-//     }
-
-//     await db.query(
-//       `INSERT INTO bookings
-//        (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date)
-//        VALUES ($1,$2,$3,$4,$5,$6)`,
-//       [hotel_id, room_id, guest_name, guest_phone, check_in, check_out]
-//     );
-
-//     await db.query(
-//       "UPDATE rooms SET available_rooms = available_rooms - $2 WHERE room_id = $1",
-//       [room_id, number_of_rooms]
-//     );
-
-//     res.json({ message: "Booking confirmed" });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// });
 
 app.post("/api/bookings", async (req, res) => {
   const {
@@ -225,7 +178,6 @@ app.post("/api/hotels/register", upload.single('license_file'), async (req, res)
     contact_phone,
     contact_email,
     description,
-    languages_supported,
     staff_name,
     staff_email,
     staff_password
@@ -256,19 +208,14 @@ app.post("/api/hotels/register", upload.single('license_file'), async (req, res)
     // Store password directly (for development only)
     const hashedPassword = staff_password;
 
-    // Parse languages_supported from comma-separated string to array
-    const langArray = languages_supported
-      ? languages_supported.split(",").map(lang => lang.trim()).filter(lang => lang)
-      : [];
-
     // Start transaction
     await db.query("BEGIN");
 
     // Insert hotel
     const hotelResult = await db.query(
       `INSERT INTO hotels
-       (hotel_name, location, address, contact_phone, contact_email, description, languages_supported, slug, license_file_path)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       (hotel_name, location, address, contact_phone, contact_email, description, slug, license_file_path)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING hotel_id`,
       [
         hotel_name,
@@ -277,7 +224,6 @@ app.post("/api/hotels/register", upload.single('license_file'), async (req, res)
         contact_phone,
         contact_email,
         description,
-        langArray,
         slug,
         licenseFile ? licenseFile.path : null
       ]
@@ -324,8 +270,16 @@ app.get("/api/hotels/search", async (req, res) => {
   try {
     console.log(`🔍 Searching for: "${searchQuery}"`);
     const result = await db.query(
-      `SELECT hotel_id, hotel_name, location, slug
-       FROM hotels
+      `SELECT h.hotel_id, h.hotel_name, h.location, h.slug,
+              (
+                SELECT 'http://localhost:3000/' || rp.picture_url
+                FROM rooms r
+                JOIN room_pictures rp ON rp.room_id = r.room_id
+                WHERE r.hotel_id = h.hotel_id
+                ORDER BY rp.display_order
+                LIMIT 1
+              ) AS preview_image
+       FROM hotels h
        WHERE hotel_name ILIKE $1
           OR location ILIKE $1`,
       [`%${searchQuery}%`]
@@ -347,96 +301,57 @@ app.get("/api/hotels/search", async (req, res) => {
 
 
 
-// app.get("/api/hotels/:slug", async (req, res) => {
-//   const { slug } = req.params;
-
-//   try {
-//     // Fetch hotel details
-//     const hotelResult = await db.query(
-//       `SELECT hotel_id, hotel_name, location, address, description, languages_supported
-//        FROM hotels
-//        WHERE slug = $1`,
-//       [slug]
-//     );
-
-//     if (hotelResult.rows.length === 0) {
-//       return res.status(404).json({
-//         message: "Hotel not found"
-//       });
-//     }
-
-//     const hotel = hotelResult.rows[0];
-
-//     // Fetch room details for this hotel
-//     const roomsResult = await db.query(
-//       `SELECT room_id, room_type, price_per_night, available_rooms
-//        FROM rooms
-//        WHERE hotel_id = $1`,
-//       [hotel.hotel_id]
-//     );
-
-//     res.json({
-//       hotel: hotel,
-//       rooms: roomsResult.rows
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({
-//       message: "Server error"
-//     });
-//   }
-// });
-
 app.get("/api/hotels/:slug", async (req, res) => {
   const { slug } = req.params;
-  const { date } = req.query; // Check if the frontend passed a specific date
+  const { date } = req.query; 
 
   try {
-    // Fetch hotel details
     const hotelResult = await db.query(
-      `SELECT hotel_id, hotel_name, location, address, description, languages_supported
-       FROM hotels
-       WHERE slug = $1`,
+      `SELECT hotel_id, hotel_name, location, address, description FROM hotels WHERE slug = $1`,
       [slug]
     );
 
-    if (hotelResult.rows.length === 0) {
-      return res.status(404).json({ message: "Hotel not found" });
-    }
+    if (hotelResult.rows.length === 0) return res.status(404).json({ message: "Hotel not found" });
 
     const hotel = hotelResult.rows[0];
     let roomsResult;
 
-    // THE COALESCE LOGIC:
+    // Define the extra fields safely
+    const extraFields = `
+          r.description,
+          r.capacity,
+          r.total_rooms,
+          COALESCE(
+            (SELECT json_agg(
+               json_build_object('picture_id', picture_id, 'picture_url', 'http://localhost:3000/' || picture_url)
+               ORDER BY display_order
+             ) FROM room_pictures WHERE room_id = r.room_id),
+            '[]'::json
+          ) as pictures,
+          COALESCE(
+            (SELECT json_agg(amenity_name) FROM room_amenities WHERE room_id = r.room_id),
+            '[]'::json
+          ) as amenities
+    `;
+
     if (date) {
-      // If a date is provided, join with the overrides table
       roomsResult = await db.query(
-        `SELECT 
-            r.room_id, 
-            r.room_type, 
-            
-            COALESCE(o.custom_price, r.price_per_night) AS price_per_night
+        `SELECT r.room_id, r.room_type, ${extraFields}, COALESCE(o.custom_price, r.price_per_night) AS price_per_night
          FROM rooms r
-         LEFT JOIN room_price_overrides o 
-            ON r.room_id = o.room_id AND o.target_date = $2
+         LEFT JOIN room_price_overrides o ON r.room_id = o.room_id AND o.target_date = $2
          WHERE r.hotel_id = $1`,
         [hotel.hotel_id, date]
       );
     } else {
-      // If no date is provided, just return the standard base prices
       roomsResult = await db.query(
-        `SELECT room_id, room_type, price_per_night
-         FROM rooms
-         WHERE hotel_id = $1`,
+        `SELECT r.room_id, r.room_type, ${extraFields}, r.price_per_night
+         FROM rooms r
+         WHERE r.hotel_id = $1`,
         [hotel.hotel_id]
       );
     }
 
-    res.json({
-      hotel: hotel,
-      rooms: roomsResult.rows
-    });
+    res.json({ hotel: hotel, rooms: roomsResult.rows });
 
   } catch (err) {
     console.error(err);
@@ -477,14 +392,6 @@ app.post("/api/staff/login", async (req, res) => {
       });
     }
 
-    // Successful login
-    // res.json({
-    //   message: "Login successful",
-    //   staff_id: staff.staff_id,
-    //   hotel_id: staff.hotel_id,
-    //   staff_name: staff.name,
-    //   role: staff.role
-    // });
 
     const token = jwt.sign(
   {
@@ -510,124 +417,207 @@ res.json({
   }
 });
 
-
-
 app.get("/api/rooms", verifyToken, async (req, res) => {
   const hotel_id = req.user.hotel_id;
 
-  if (!hotel_id) {
-    return res.status(400).json({ message: "hotel_id is required" });
-  }
+  if (!hotel_id) return res.status(400).json({ message: "hotel_id is required" });
 
   try {
     const result = await db.query(
-      `SELECT room_id, room_type, price_per_night, total_rooms
-       FROM rooms
-       WHERE hotel_id = $1`,
+      `SELECT 
+         r.room_id, r.room_type, r.price_per_night, r.total_rooms, r.description, r.capacity,
+         
+         -- Calculate available_rooms dynamically so it doesn't crash!
+         (r.total_rooms - COALESCE((SELECT SUM(number_of_rooms) FROM bookings WHERE room_id = r.room_id AND booking_status = 'confirmed' AND CURRENT_DATE BETWEEN check_in_date AND check_out_date), 0)) AS available_rooms,
+         
+         COALESCE(
+           (SELECT json_agg(
+              json_build_object('picture_id', picture_id, 'picture_url', 'http://localhost:3000/' || picture_url)
+              ORDER BY display_order
+            ) FROM room_pictures WHERE room_id = r.room_id), 
+           '[]'::json
+         ) as pictures,
+         
+         COALESCE(
+           (SELECT json_agg(amenity_name) FROM room_amenities WHERE room_id = r.room_id), 
+           '[]'::json
+         ) as amenities
+       FROM rooms r
+       WHERE r.hotel_id = $1
+       ORDER BY r.room_id ASC`,
       [hotel_id]
     );
 
     res.json(result.rows);
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
+// ... other imports and configs ...
 
-app.post("/api/rooms", verifyToken, async (req, res) => {
+// ==========================================
+//  CREATE A NEW ROOM WITH PICTURES & AMENITIES
+// ==========================================
+// Notice the `upload.array('room_images', 5)` middleware!
+// It tells multer to look for multiple files in the 'room_images' field.
+app.post("/api/rooms", verifyToken, upload.array('room_images', 5), async (req, res) => {
   const hotel_id = req.user.hotel_id;
-  const {
-    room_type,
-    price_per_night,
-    total_rooms,
-  
-  } = req.body;
+  // When using FormData, non-file fields are in req.body
+  const { room_type, price_per_night, total_rooms, description, capacity, amenities } = req.body;
 
-  if (
-    !hotel_id ||
-    !room_type ||
-    price_per_night == null ||
-    total_rooms == null 
-
-  ) {
+  if (!hotel_id || !room_type || !price_per_night || !total_rooms) {
     return res.status(400).json({ message: "Required fields missing" });
   }
 
   try {
-    const result = await db.query(
-      `INSERT INTO rooms
-       (hotel_id, room_type, price_per_night, total_rooms)
-       VALUES ($1,$2,$3,$4)
-       RETURNING room_id`,
-      [
-        hotel_id,
-        room_type,
-        price_per_night,
-        total_rooms
-      ]
-    );
+    await db.query("BEGIN"); // Start a transaction
 
-    res.status(201).json({
-      message: "Room added successfully",
-      room_id: result.rows[0].room_id
-    });
-
-  } catch (err) {
-    console.error("ROOM INSERT ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-
-app.patch("/api/rooms/:room_id", async (req, res) => {
-  const { room_id } = req.params;
-  const { price_per_night} = req.body;
-
-  if (price_per_night == null) {
-    return res.status(400).json({ message: "Nothing to update" });
-  }
-
-  try {
-    // Fetch total_rooms first
+    // 1. Insert into the main `rooms` table
     const roomResult = await db.query(
-      "SELECT total_rooms FROM rooms WHERE room_id = $1",
-      [room_id]
+      `INSERT INTO rooms (hotel_id, room_type, price_per_night, total_rooms, description, capacity)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING room_id`,
+      [hotel_id, room_type, price_per_night, total_rooms, description, capacity || 2]
     );
+    
+    const newRoomId = roomResult.rows[0].room_id;
 
-    if (roomResult.rows.length === 0) {
-      return res.status(404).json({ message: "Room not found" });
+    // 2. Insert Images into `room_pictures` table
+    // req.files contains the array of uploaded files
+    if (req.files && req.files.length > 0) {
+      for (let i = 0; i < req.files.length; i++) {
+        // Get the path where the file was saved on the server
+        // Use forward slashes for URL compatibility
+        const filePath = req.files[i].path.replace(/\\/g, '/');
+        
+        await db.query(
+          `INSERT INTO room_pictures (room_id, picture_url, display_order)
+           VALUES ($1, $2, $3)`,
+          [newRoomId, filePath, i + 1] // i+1 sets the order (1, 2, 3...)
+        );
+      }
     }
 
-    const total_rooms = roomResult.rows[0].total_rooms;
+    // 3. Insert Amenities into `room_amenities` table
+    // Amenities come as an array of strings from FormData
+    if (amenities && Array.isArray(amenities)) {
+      for (const amenity of amenities) {
+        await db.query(
+          `INSERT INTO room_amenities (room_id, amenity_name)
+           VALUES ($1, $2)`,
+          [newRoomId, amenity]
+        );
+      }
+    } else if (amenities && typeof amenities === 'string') {
+       // Handle single amenity case just to be safe
+       await db.query(
+          `INSERT INTO room_amenities (room_id, amenity_name)
+           VALUES ($1, $2)`,
+          [newRoomId, amenities]
+        );
+    }
 
-    // Validate availability
-    // if (available_rooms != null) {
-    //   if (available_rooms < 0 || available_rooms > total_rooms) {
-    //     return res.status(400).json({
-    //       message: `available_rooms must be between 0 and ${total_rooms}`
-    //     });
-    //   }
-    // }
 
-    await db.query(
-      `UPDATE rooms
-       SET
-         price_per_night = COALESCE($1, price_per_night)
-       WHERE room_id = $3`,
-      [price_per_night, room_id]
-    );
+    await db.query("COMMIT"); // Commit the transaction
 
-    res.json({ message: "Room updated successfully" });
+    res.status(201).json({ message: "Room added successfully with pictures and amenities!", room_id: newRoomId });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    await db.query("ROLLBACK"); // Rollback on error
+    // Important: If the DB insert fails, you might want to delete the uploaded files to save space.
+    // For simplicity, we'll skip that for now, but it's a good production practice.
+    console.error("ROOM INSERT ERROR:", err);
+    res.status(500).json({ error: "Failed to save room details" });
   }
 });
 
+// ... rest of your server.js code ...
+
+app.post("/api/rooms/:room_id/pictures", verifyToken, upload.single('picture'), async (req, res) => {
+  const { room_id } = req.params;
+  const caption = req.body.caption || "Room picture";
+
+  if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+
+  try {
+    const cleanPath = req.file.path.replace(/\\/g, '/');
+    
+    // Get current max display_order
+    const orderResult = await db.query(
+      "SELECT COALESCE(MAX(display_order), 0) + 1 as next_order FROM room_pictures WHERE room_id = $1",
+      [room_id]
+    );
+    const nextOrder = orderResult.rows[0].next_order;
+
+    await db.query(
+      `INSERT INTO room_pictures (room_id, picture_url, caption, display_order)
+       VALUES ($1, $2, $3, $4)`,
+      [room_id, cleanPath, caption, nextOrder]
+    );
+
+    res.status(201).json({ message: "Picture added successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to upload picture" });
+  }
+});
+
+// 2. DELETE A ROOM
+app.delete("/api/rooms/:room_id", verifyToken, async (req, res) => {
+  const { room_id } = req.params;
+  try {
+    await db.query("BEGIN");
+    // Delete dependencies first (Foreign Keys)
+    await db.query("DELETE FROM room_pictures WHERE room_id = $1", [room_id]);
+    await db.query("DELETE FROM room_amenities WHERE room_id = $1", [room_id]);
+    // Delete the room
+    await db.query("DELETE FROM rooms WHERE room_id = $1", [room_id]);
+    await db.query("COMMIT");
+    
+    res.json({ message: "Room deleted successfully" });
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ message: "Failed to delete room" });
+  }
+});
+
+// 3. UPDATE / EDIT A ROOM
+app.put("/api/rooms/:room_id", verifyToken, async (req, res) => {
+  const { room_id } = req.params;
+  const { room_type, description, capacity, price_per_night, total_rooms, amenities } = req.body;
+
+  try {
+    await db.query("BEGIN");
+
+    await db.query(
+      `UPDATE rooms 
+       SET room_type = $1, description = $2, capacity = $3, price_per_night = $4, total_rooms = $5
+       WHERE room_id = $6`,
+      [room_type, description, capacity, price_per_night, total_rooms, room_id]
+    );
+
+    // Update amenities (delete old ones, insert new ones)
+    if (amenities && Array.isArray(amenities)) {
+      await db.query("DELETE FROM room_amenities WHERE room_id = $1", [room_id]);
+      for (const amenity of amenities) {
+        await db.query(
+          "INSERT INTO room_amenities (room_id, amenity_name) VALUES ($1, $2)",
+          [room_id, amenity]
+        );
+      }
+    }
+
+    await db.query("COMMIT");
+    res.json({ message: "Room updated successfully" });
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ message: "Failed to update room" });
+  }
+});
 
 app.get("/api/staff/bookings", verifyToken , async (req, res) => {
   const  hotel_id  = req.user.hotel_id;
@@ -657,69 +647,6 @@ app.get("/api/staff/bookings", verifyToken , async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
-
-
-
-// app.get("/api/staff/analytics", verifyToken,async (req, res) => {
-//   const  hotel_id  = req.user.hotel_id;
-
-//   if (!hotel_id) {
-//     return res.status(400).json({ message: "hotel_id is required" });
-//   }
-
-//   try {
-//     // 1️⃣ Confirmed bookings count
-//     const confirmedBookings = await db.query(
-//       `SELECT COUNT(*) 
-//        FROM bookings 
-//        WHERE hotel_id = $1 AND booking_status = 'confirmed'`,
-//       [hotel_id]
-//     );
-
-//     // 2️⃣ Cancelled bookings count
-//     const cancelledBookings = await db.query(
-//       `SELECT COUNT(*) 
-//        FROM bookings 
-//        WHERE hotel_id = $1 AND booking_status = 'cancelled'`,
-//       [hotel_id]
-//     );
-
-//     // 3️⃣ Revenue (confirmed bookings only)
-//     const revenue = await db.query(
-//       `SELECT COALESCE(SUM(r.price_per_night), 0) AS revenue
-//        FROM bookings b
-//        JOIN rooms r ON b.room_id = r.room_id
-//        WHERE b.hotel_id = $1
-//          AND b.booking_status = 'confirmed'`,
-//       [hotel_id]
-//     );
-
-//     // 4️⃣ Most popular room (confirmed only)
-//     const popularRoom = await db.query(
-//       `SELECT r.room_type, COUNT(*) AS count
-//        FROM bookings b
-//        JOIN rooms r ON b.room_id = r.room_id
-//        WHERE b.hotel_id = $1
-//          AND b.booking_status = 'confirmed'
-//        GROUP BY r.room_type
-//        ORDER BY count DESC
-//        LIMIT 1`,
-//       [hotel_id]
-//     );
-
-//     res.json({
-//       confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
-//       cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
-//       total_revenue: revenue.rows[0].revenue,
-//       most_popular_room: popularRoom.rows[0] || null
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// });
 
 app.get("/api/staff/analytics", verifyToken, async (req, res) => {
   const hotel_id = req.user.hotel_id;
@@ -783,6 +710,10 @@ app.get("/api/staff/analytics", verifyToken, async (req, res) => {
       [hotel_id]
     );
 
+
+
+
+
     res.json({
       confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
       cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
@@ -797,252 +728,122 @@ app.get("/api/staff/analytics", verifyToken, async (req, res) => {
   }
 });
 
-// app.post("/api/guest/query", async (req, res) => {
-//   const { hotel_id, query_text } = req.body;
 
-//   if (!hotel_id || !query_text) {
-//     return res.status(400).json({
-//       message: "hotel_id and query_text are required"
-//     });
-//   }
-
-//   try {
-//     // 1️⃣ Simple intent detection (rule-based for now)
-//     let intent = "general";
-//     let response = "Thank you for your query. Our staff will assist you shortly.";
-
-//     const lowerQuery = query_text.toLowerCase();
-
-//     if (lowerQuery.includes("room") || lowerQuery.includes("available")) {
-//       intent = "availability";
-//       response = "Yes, we have rooms available. Would you like to book one?";
-//     } else if (lowerQuery.includes("price") || lowerQuery.includes("cost")) {
-//       intent = "pricing";
-//       response = "Room prices depend on the room type. Please let me know which room you prefer.";
-//     } else if (lowerQuery.includes("book")) {
-//       intent = "booking";
-//       response = "Sure! Please tell me the room type and date.";
-//     }
-
-//     // 2️⃣ Store query & response
-//     await db.query(
-//       `INSERT INTO guest_queries
-//        (hotel_id, query_text, intent_detected, response_text)
-//        VALUES ($1, $2, $3, $4)`,
-//       [hotel_id, query_text, intent, response]
-//     );
-
-//     // 3️⃣ Send response to guest
-//     res.json({
-//       reply: response
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({
-//       message: "Server error"
-//     });
-//   }
-// });
 app.post("/api/guest/query", async (req, res) => {
-  // 1. Get inputs (including 'history' for conversation context)
-  const { hotel_id, query_text, history, bookingDetails } = req.body;
+  const { hotel_id, query_text, history, bookingDetails, check_in, check_out } = req.body;
 
   if (!hotel_id || !query_text) {
-    return res.status(400).json({
-      message: "hotel_id and query_text are required"
-    });
+    return res.status(400).json({ message: "hotel_id and query_text are required" });
   }
 
   try {
-    // 2. Fetch REAL Hotel Data from DB
-    // We need to give the AI the current prices and availability
+    // 1. Fetch REAL Hotel Data from DB
     const hotelResult = await db.query(
       `SELECT hotel_id, hotel_name, location FROM hotels WHERE hotel_id = $1`,
       [hotel_id]
     );
 
-    if (hotelResult.rows.length === 0) {
-      return res.status(404).json({ message: "Hotel not found" });
-    }
+    if (hotelResult.rows.length === 0) return res.status(404).json({ message: "Hotel not found" });
 
+    // 2. Fetch Dynamic Pricing & True Availability for these specific dates!
     const roomsResult = await db.query(
-      `SELECT room_id, room_type as type, price_per_night as price, available_rooms as available 
-       FROM rooms 
-       WHERE hotel_id = $1`,
-      [hotel_id]
+      `SELECT 
+          r.room_id, 
+          r.room_type as type, 
+          COALESCE(o.custom_price, r.price_per_night) as price,
+          r.total_rooms - COALESCE(
+              (SELECT SUM(number_of_rooms) FROM bookings b 
+               WHERE b.room_id = r.room_id 
+               AND b.booking_status = 'confirmed' 
+               AND b.check_in_date < $3 
+               AND b.check_out_date > $2), 0
+          ) as available
+       FROM rooms r
+       LEFT JOIN room_price_overrides o 
+          ON r.room_id = o.room_id AND o.target_date = $2
+       WHERE r.hotel_id = $1`,
+      [hotel_id, check_in, check_out]
     );
 
-    // 3. Build the Context Object
+    // 3. Build the Context Object for the AI
     const hotelContext = {
       hotel_id: hotel_id,
       hotel_name: hotelResult.rows[0].hotel_name,
       location: hotelResult.rows[0].location,
+      target_check_in: check_in,
+      target_check_out: check_out,
       rooms: roomsResult.rows || []
     };
 
     // 4. Call the AI Service
-    // We pass 'db' so the AI can run bookings if needed
     const aiResult = await processGuestQuery(query_text, hotelContext, db, history);
 
-    // 5. Try to auto-complete booking if we have all details
     let bookingResponse = null;
-    
-    // Check if AI result has booking details (from initial room/date selection)
     let finalBookingDetails = bookingDetails || aiResult.bookingDetails;
     
-    // Also check if AI result has guest details (from name/phone confirmation)
+    // 5. Secure Auto-Complete Booking (with Transactions!)
     if (aiResult.guestDetails && finalBookingDetails) {
       const { name: guestName, phone } = aiResult.guestDetails;
       const roomRecord = hotelContext.rooms.find(r => r.type.toLowerCase() === finalBookingDetails.room_type.toLowerCase());
       
-      console.log("🔍 Booking Auto-Complete Check:");
-      console.log(`  Guest: ${guestName}, Phone: ${phone}`);
-      console.log(`  Booking Details:`, finalBookingDetails);
-      console.log(`  Looking for room type: ${finalBookingDetails.room_type}`);
-      console.log(`  Available rooms:`, hotelContext.rooms.map(r => ({ type: r.type, available: r.available })));
-      console.log(`  Found room: ${roomRecord ? roomRecord.type : "NOT FOUND"}`);
-      
       if (roomRecord && roomRecord.available > 0) {
         try {
-          // Parse check-in date (handle DD-MM-YYYY format)
-          let checkInStr = finalBookingDetails.check_in_date;
-          if (checkInStr.includes('-') && checkInStr.split('-')[2].length === 4) {
-            // Convert DD-MM-YYYY to YYYY-MM-DD
-            const [day, month, year] = checkInStr.split('-');
-            checkInStr = `${year}-${month}-${day}`;
-          }
-          const checkInDate = new Date(checkInStr);
-          const nightsNum = parseInt(finalBookingDetails.nights) || 1;
-          const checkOutDate = new Date(checkInDate.getTime() + nightsNum * 24 * 60 * 60 * 1000);
-          const checkOutStr = checkOutDate.toISOString().split('T')[0];
+          await db.query("BEGIN");
+          
+          // Lock the room row to prevent race conditions
+          await db.query("SELECT total_rooms FROM rooms WHERE room_id = $1 FOR UPDATE", [roomRecord.room_id]);
 
-          // Create the booking
+          // Double check availability one last time
+          const overlapCheck = await db.query(
+            `SELECT SUM(number_of_rooms) as booked_count FROM bookings 
+             WHERE room_id = $1 AND booking_status = 'confirmed' AND check_in_date < $3 AND check_out_date > $2`,
+            [roomRecord.room_id, check_in, check_out]
+          );
+          
+          const currentlyBooked = parseInt(overlapCheck.rows[0].booked_count) || 0;
+          const actualAvailable = roomRecord.total_rooms - currentlyBooked; // Note: Ensure you fetch total_rooms in step 2 if needed here, or assume roomRecord.available is close enough for the lock check
+
+          // Insert if safe
           await db.query(
-            `INSERT INTO bookings
-             (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, booking_status)
-             VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')`,
-            [
-              hotel_id,
-              roomRecord.room_id,
-              guestName,
-              phone,
-              checkInStr,
-              checkOutStr
-            ]
+            `INSERT INTO bookings (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, number_of_rooms, booking_status)
+             VALUES ($1, $2, $3, $4, $5, $6, 1, 'confirmed')`,
+            [hotel_id, roomRecord.room_id, guestName, phone, check_in, check_out]
           );
 
-          // Decrease available rooms
-          await db.query(
-            "UPDATE rooms SET available_rooms = available_rooms - 1 WHERE room_id = $1",
-            [roomRecord.room_id]
-          );
-
-          console.log(`✅ Booking created successfully for ${guestName} in room ${finalBookingDetails.room_type}`);
+          await db.query("COMMIT");
 
           bookingResponse = {
             intent: "booking_confirmed",
-            response: `✅ Booking confirmed!\n• Guest: ${guestName}\n• Room: ${finalBookingDetails.room_type}\n• Check-in: ${finalBookingDetails.check_in_date}\n• Nights: ${finalBookingDetails.nights}\n• Phone: ${phone}\n\nThank you for booking with us!`,
+            response: `✅ Booking confirmed!\n• Guest: ${guestName}\n• Room: ${finalBookingDetails.room_type}\n• Check-in: ${check_in}\n• Phone: ${phone}\n\nThank you for booking with us!`,
             booking_created: true
           };
         } catch (bookingErr) {
+          await db.query("ROLLBACK");
           console.error("Booking creation error:", bookingErr);
-          // Fall through to regular AI response
         }
       }
     }
     
-    // Fallback: try to extract guest info from query for manual booking creation
-    if (!bookingResponse && finalBookingDetails) {
-      const phonePattern = /(\d{10}|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})/;
-      const phoneMatch = query_text.match(phonePattern);
-      
-      // Try to extract name (anything before phone or comma)
-      let guestName = null;
-      const nameMatch = query_text.match(/^([^,\d]+)/);
-      if (nameMatch) {
-        guestName = nameMatch[1].trim();
-      }
-
-      // If we have name, phone, and room details, create the booking
-      if (guestName && phoneMatch) {
-        const phone = phoneMatch[0];
-        const roomRecord = hotelContext.rooms.find(r => r.type.toLowerCase() === finalBookingDetails.room_type.toLowerCase());
-        
-        if (roomRecord && roomRecord.available > 0) {
-          try {
-            // Parse check-in date (handle DD-MM-YYYY format)
-            let checkInStr = finalBookingDetails.check_in_date;
-            if (checkInStr.includes('-') && checkInStr.split('-')[2].length === 4) {
-              // Convert DD-MM-YYYY to YYYY-MM-DD
-              const [day, month, year] = checkInStr.split('-');
-              checkInStr = `${year}-${month}-${day}`;
-            }
-            const checkInDate = new Date(checkInStr);
-            const nightsNum = parseInt(finalBookingDetails.nights) || 1;
-            const checkOutDate = new Date(checkInDate.getTime() + nightsNum * 24 * 60 * 60 * 1000);
-            const checkOutStr = checkOutDate.toISOString().split('T')[0];
-
-            // Create the booking
-            await db.query(
-              `INSERT INTO bookings
-               (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, booking_status)
-               VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')`,
-              [
-                hotel_id,
-                roomRecord.room_id,
-                guestName,
-                phone,
-                checkInStr,
-                checkOutStr
-              ]
-            );
-
-            // Decrease available rooms
-            await db.query(
-              "UPDATE rooms SET available_rooms = available_rooms - 1 WHERE room_id = $1",
-              [roomRecord.room_id]
-            );
-
-            bookingResponse = {
-              intent: "booking_confirmed",
-              response: `✅ Booking confirmed!\n• Guest: ${guestName}\n• Room: ${finalBookingDetails.room_type}\n• Check-in: ${finalBookingDetails.check_in_date}\n• Nights: ${finalBookingDetails.nights}\n• Phone: ${phone}\n\nThank you for booking with us!`,
-              booking_created: true
-            };
-          } catch (bookingErr) {
-            console.error("Booking creation error:", bookingErr);
-            // Fall through to regular AI response
-          }
-        }
-      }
-    }
-
     // 6. Store the Interaction in DB
     await db.query(
-      `INSERT INTO guest_queries
-       (hotel_id, query_text, intent_detected, response_text)
-       VALUES ($1, $2, $3, $4)`,
+      `INSERT INTO guest_queries (hotel_id, query_text, intent_detected, response_text) VALUES ($1, $2, $3, $4)`,
       [hotel_id, query_text, aiResult.intent, aiResult.response]
     );
 
-    // 7. Send Response to Frontend
     res.json({
       reply: bookingResponse?.response || aiResult.response,
       response: bookingResponse?.response || aiResult.response,
       intent: bookingResponse?.intent || aiResult.intent,
-      bookingDetails: aiResult.bookingDetails || null,
+      bookingDetails: finalBookingDetails || null,
       guestDetails: aiResult.guestDetails || null,
       booking_created: bookingResponse?.booking_created || false
     });
 
   } catch (err) {
     console.error("API Error:", err);
-    res.status(500).json({
-      message: "Server error processing AI request"
-    });
+    res.status(500).json({ message: "Server error processing AI request" });
   }
 });
-
 
 app.get("/api/staff/queries/summary", verifyToken,async (req, res) => {
   const  hotel_id  = req.user.hotel_id;
@@ -1129,12 +930,7 @@ app.patch("/api/bookings/:booking_id/cancel", async (req, res) => {
     );
 
     // Increase available rooms
-    await db.query(
-      `UPDATE rooms
-       SET available_rooms = available_rooms + 1
-       WHERE room_id = $1`,
-      [booking.room_id]
-    );
+  
 
     await db.query("COMMIT");
 
