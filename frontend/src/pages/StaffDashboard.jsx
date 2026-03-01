@@ -226,13 +226,7 @@ function StaffDashboard() {
                   </div>
                 )}
 
-                {/* {parseFloat(analytics.key_metrics.cancellation_rate) > 20 && (
-                  <div style={alertStyle("warning")}> 
-                    <strong>⚠️ High Cancellations</strong>
-                    <p>Cancellation rate is {analytics.key_metrics.cancellation_rate}%. Review your cancellation and refund policy.</p>
-                  </div>
-                )} */}
-{/* UPGRADED CANCELLATION ALERT */}
+           
                 {parseFloat(analytics.key_metrics.cancellation_rate) > 20 && (
                   <div style={alertStyle("danger")}> 
                     <strong>🚨 High Cancellation Rate!</strong>
@@ -243,7 +237,7 @@ function StaffDashboard() {
                     </p>
                   </div>
                 )}
-                
+
                 {parseFloat(analytics.key_metrics.repeat_guest_rate) > 20 && (
                   <div style={alertStyle("success")}> 
                     <strong>✅ Great Guest Loyalty</strong>
@@ -393,13 +387,7 @@ const metricChangeStyle = (value) => ({
   marginTop: "8px",
 });
 
-// const alertStyle = (type) => ({
-//   backgroundColor: type === "warning" ? "#fef3c7" : "#d1fae5",
-//   border: `1px solid ${type === "warning" ? "#facc15" : "#10b981"}`,
-//   padding: "16px",
-//   borderRadius: "8px",
-//   color: type === "warning" ? "#92400e" : "#064e3b",
-// });
+
 
 const alertStyle = (type) => ({
   backgroundColor: type === "danger" ? "#fef2f2" : type === "warning" ? "#fef3c7" : "#d1fae5",
