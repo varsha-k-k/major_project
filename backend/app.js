@@ -15,6 +15,9 @@ import {
   applyRecommendedPrice 
 } from "./services/pricingEngine.js";
 
+import { getComprehensiveAnalytics } from "./services/analyticsService.js";
+
+
 const app = express();
 const port = 3000;
 
@@ -648,78 +651,234 @@ app.get("/api/staff/bookings", verifyToken , async (req, res) => {
   }
 });
 
+// app.get("/api/staff/analytics", verifyToken, async (req, res) => {
+//   const hotel_id = req.user.hotel_id;
+
+//   if (!hotel_id) {
+//     return res.status(400).json({ message: "hotel_id is required" });
+//   }
+
+//   try {
+//     // 1️⃣ Confirmed bookings count
+//     const confirmedBookings = await db.query(
+//       `SELECT COUNT(*) 
+//        FROM bookings 
+//        WHERE hotel_id = $1 AND booking_status = 'confirmed'`,
+//       [hotel_id]
+//     );
+
+//     // 2️⃣ Cancelled bookings count
+//     const cancelledBookings = await db.query(
+//       `SELECT COUNT(*) 
+//        FROM bookings 
+//        WHERE hotel_id = $1 AND booking_status = 'cancelled'`,
+//       [hotel_id]
+//     );
+
+//     // 3️⃣ Total Revenue (confirmed bookings only)
+//     const revenue = await db.query(
+//       `SELECT COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) AS revenue
+//        FROM bookings b
+//        JOIN rooms r ON b.room_id = r.room_id
+//        WHERE b.hotel_id = $1
+//          AND b.booking_status = 'confirmed'`,
+//       [hotel_id]
+//     );
+
+//     // 4️⃣ Most popular room (confirmed only)
+//     const popularRoom = await db.query(
+//       `SELECT r.room_type, COUNT(*) AS count
+//        FROM bookings b
+//        JOIN rooms r ON b.room_id = r.room_id
+//        WHERE b.hotel_id = $1
+//          AND b.booking_status = 'confirmed'
+//        GROUP BY r.room_type
+//        ORDER BY count DESC
+//        LIMIT 1`,
+//       [hotel_id]
+//     );
+
+//     // 5️⃣ NEW: Revenue Trend (Last 30 Days Grouped by Date)
+//     const revenueTrend = await db.query(
+//       `SELECT 
+//          TO_CHAR(b.created_at, 'Mon DD') as date,
+//          COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) as daily_revenue
+//        FROM bookings b
+//        JOIN rooms r ON b.room_id = r.room_id
+//        WHERE b.hotel_id = $1
+//          AND b.booking_status = 'confirmed'
+//          AND b.created_at >= NOW() - INTERVAL '30 days'
+//        GROUP BY TO_CHAR(b.created_at, 'Mon DD'), DATE(b.created_at)
+//        ORDER BY DATE(b.created_at) ASC`,
+//       [hotel_id]
+//     );
+
+
+
+
+
+//     res.json({
+//       confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
+//       cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
+//       total_revenue: parseInt(revenue.rows[0].revenue),
+//       most_popular_room: popularRoom.rows[0] || null,
+//       revenue_trend: revenueTrend.rows // Sent to frontend for the chart
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error generating analytics" });
+//   }
+// });
+
+// ==========================================
+// MASTER ANALYTICS ROUTE
+// ==========================================
+// ==========================================
+// MASTER ANALYTICS ROUTE
+// ==========================================
 app.get("/api/staff/analytics", verifyToken, async (req, res) => {
   const hotel_id = req.user.hotel_id;
+  const period = parseInt(req.query.period) || 30; // Default 30 days
 
-  if (!hotel_id) {
-    return res.status(400).json({ message: "hotel_id is required" });
-  }
+  if (!hotel_id) return res.status(400).json({ message: "hotel_id is required" });
 
   try {
-    // 1️⃣ Confirmed bookings count
-    const confirmedBookings = await db.query(
-      `SELECT COUNT(*) 
-       FROM bookings 
-       WHERE hotel_id = $1 AND booking_status = 'confirmed'`,
-      [hotel_id]
-    );
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - period);
+    
+    const previousStartDate = new Date(startDate);
+    previousStartDate.setDate(previousStartDate.getDate() - period);
 
-    // 2️⃣ Cancelled bookings count
-    const cancelledBookings = await db.query(
-      `SELECT COUNT(*) 
-       FROM bookings 
-       WHERE hotel_id = $1 AND booking_status = 'cancelled'`,
-      [hotel_id]
-    );
-
-    // 3️⃣ Total Revenue (confirmed bookings only)
-    const revenue = await db.query(
-      `SELECT COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) AS revenue
+    // 1️⃣ CORE METRICS (Current Period)
+    const coreMetrics = await db.query(
+      `SELECT 
+        COUNT(*) as total_bookings,
+        COALESCE(SUM(CASE WHEN booking_status = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed,
+        COALESCE(SUM(CASE WHEN booking_status = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled,
+        COALESCE(SUM(CASE WHEN booking_status = 'confirmed' THEN 
+          (check_out_date::date - check_in_date::date) * r.price_per_night * COALESCE(b.number_of_rooms, 1) 
+        ELSE 0 END), 0) as total_revenue,
+        COALESCE(SUM(CASE WHEN booking_status = 'confirmed' THEN 
+          (check_out_date::date - check_in_date::date) * COALESCE(b.number_of_rooms, 1) 
+        ELSE 0 END), 0) as total_nights
        FROM bookings b
        JOIN rooms r ON b.room_id = r.room_id
-       WHERE b.hotel_id = $1
-         AND b.booking_status = 'confirmed'`,
-      [hotel_id]
+       WHERE b.hotel_id = $1 AND b.created_at >= $2`,
+      [hotel_id, startDate]
     );
 
-    // 4️⃣ Most popular room (confirmed only)
-    const popularRoom = await db.query(
-      `SELECT r.room_type, COUNT(*) AS count
+    const data = coreMetrics.rows[0];
+    const totalRevenue = parseInt(data.total_revenue) || 0;
+    const totalNights = parseInt(data.total_nights) || 0;
+    const confirmedCount = parseInt(data.confirmed) || 0;
+    const totalBookings = parseInt(data.total_bookings) || 0;
+    const cancelledCount = parseInt(data.cancelled) || 0;
+
+    // 2️⃣ HOTEL CAPACITY
+    const totalRoomsResult = await db.query(
+      `SELECT COALESCE(SUM(total_rooms), 1) as total_capacity FROM rooms WHERE hotel_id = $1`,
+      [hotel_id]
+    );
+    const totalCapacity = parseInt(totalRoomsResult.rows[0].total_capacity) || 1;
+    const totalAvailableNights = totalCapacity * period;
+
+    // 3️⃣ CALCULATE ADVANCED KPIs
+    const occupancyRate = totalAvailableNights > 0 ? ((totalNights / totalAvailableNights) * 100).toFixed(1) : 0;
+    const revpar = totalCapacity > 0 ? Math.round(totalRevenue / totalCapacity) : 0;
+    const adr = totalNights > 0 ? Math.round(totalRevenue / totalNights) : 0;
+    const alos = confirmedCount > 0 ? (totalNights / confirmedCount).toFixed(1) : 0;
+    const cancellationRate = totalBookings > 0 ? ((cancelledCount / totalBookings) * 100).toFixed(1) : 0;
+
+    // 4️⃣ REPEAT GUESTS
+    const guestMetrics = await db.query(
+      `SELECT COUNT(DISTINCT guest_phone) as unique_guests
+       FROM bookings WHERE hotel_id = $1 AND booking_status = 'confirmed' AND created_at >= $2`,
+      [hotel_id, startDate]
+    );
+    const uniqueGuests = parseInt(guestMetrics.rows[0].unique_guests) || 0;
+    const repeatGuestRate = confirmedCount > 0 ? (((confirmedCount - uniqueGuests) / confirmedCount) * 100).toFixed(1) : 0;
+
+    // 5️⃣ REVENUE BY ROOM TYPE
+    const revenueByRoom = await db.query(
+      `SELECT 
+        r.room_type,
+        COUNT(b.booking_id) as bookings,
+        COALESCE(SUM((b.check_out_date::date - b.check_in_date::date) * COALESCE(b.number_of_rooms, 1) * r.price_per_night), 0) as revenue
        FROM bookings b
        JOIN rooms r ON b.room_id = r.room_id
-       WHERE b.hotel_id = $1
-         AND b.booking_status = 'confirmed'
+       WHERE b.hotel_id = $1 AND b.booking_status = 'confirmed' AND b.created_at >= $2
        GROUP BY r.room_type
-       ORDER BY count DESC
-       LIMIT 1`,
-      [hotel_id]
+       ORDER BY revenue DESC`,
+      [hotel_id, startDate]
     );
 
-    // 5️⃣ NEW: Revenue Trend (Last 30 Days Grouped by Date)
+    // 6️⃣ PEAK DAYS
+    const peakDays = await db.query(
+      `SELECT 
+        TRIM(TO_CHAR(check_in_date, 'Day')) as day_of_week,
+        COUNT(*) as bookings
+       FROM bookings 
+       WHERE hotel_id = $1 AND booking_status = 'confirmed' AND created_at >= $2
+       GROUP BY TRIM(TO_CHAR(check_in_date, 'Day'))
+       ORDER BY bookings DESC`,
+      [hotel_id, startDate]
+    );
+
+    // 7️⃣ REVENUE TREND (For Line Chart)
     const revenueTrend = await db.query(
       `SELECT 
          TO_CHAR(b.created_at, 'Mon DD') as date,
-         COALESCE(SUM(r.price_per_night * b.number_of_rooms), 0) as daily_revenue
+         COALESCE(SUM((b.check_out_date::date - b.check_in_date::date) * r.price_per_night * COALESCE(b.number_of_rooms, 1)), 0) as daily_revenue
        FROM bookings b
        JOIN rooms r ON b.room_id = r.room_id
-       WHERE b.hotel_id = $1
-         AND b.booking_status = 'confirmed'
-         AND b.created_at >= NOW() - INTERVAL '30 days'
+       WHERE b.hotel_id = $1 AND b.booking_status = 'confirmed' AND b.created_at >= $2
        GROUP BY TO_CHAR(b.created_at, 'Mon DD'), DATE(b.created_at)
        ORDER BY DATE(b.created_at) ASC`,
-      [hotel_id]
+      [hotel_id, startDate]
     );
 
+    // 8️⃣ PREVIOUS PERIOD COMPARISON
+    const prevMetrics = await db.query(
+      `SELECT COALESCE(SUM((check_out_date::date - check_in_date::date) * r.price_per_night * COALESCE(b.number_of_rooms, 1)), 0) as prev_revenue
+       FROM bookings b
+       JOIN rooms r ON b.room_id = r.room_id
+       WHERE b.hotel_id = $1 AND b.booking_status = 'confirmed' AND b.created_at >= $2 AND b.created_at < $3`,
+      [hotel_id, previousStartDate, startDate]
+    );
+    const prevRevenue = parseInt(prevMetrics.rows[0].prev_revenue) || 0;
+    const revenueChange = prevRevenue > 0 ? (((totalRevenue - prevRevenue) / prevRevenue) * 100).toFixed(1) : (totalRevenue > 0 ? 100 : 0);
 
-
-
-
+    // 🚀 SEND PERFECTLY FORMATTED JSON
     res.json({
-      confirmed_bookings: parseInt(confirmedBookings.rows[0].count),
-      cancelled_bookings: parseInt(cancelledBookings.rows[0].count),
-      total_revenue: parseInt(revenue.rows[0].revenue),
-      most_popular_room: popularRoom.rows[0] || null,
-      revenue_trend: revenueTrend.rows // Sent to frontend for the chart
+      period: period,
+      summary: {
+        total_revenue: totalRevenue,
+        total_bookings: totalBookings,
+        confirmed_bookings: confirmedCount,
+        cancelled_bookings: cancelledCount
+      },
+      key_metrics: {
+        occupancy_rate: occupancyRate,
+        revpar: revpar,
+        adr: adr,
+        alos: alos,
+        cancellation_rate: cancellationRate,
+        repeat_guest_rate: repeatGuestRate
+      },
+      revenue_by_room_type: revenueByRoom.rows.map(r => ({
+        room_type: r.room_type,
+        revenue: parseInt(r.revenue) || 0
+      })),
+      peak_days: peakDays.rows.map(r => ({
+        day_of_week: r.day_of_week,
+        bookings: parseInt(r.bookings) || 0
+      })),
+      revenue_trend: revenueTrend.rows,
+      comparison: {
+        revenue_change_percent: parseFloat(revenueChange),
+        previous_period_revenue: prevRevenue
+      }
     });
 
   } catch (err) {
@@ -727,8 +886,6 @@ app.get("/api/staff/analytics", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Server error generating analytics" });
   }
 });
-
-
 app.post("/api/guest/query", async (req, res) => {
   const { hotel_id, query_text, history, bookingDetails, check_in, check_out } = req.body;
 

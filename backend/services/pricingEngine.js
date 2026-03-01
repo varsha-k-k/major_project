@@ -1,355 +1,4 @@
-// import dotenv from "dotenv";
 
-// dotenv.config();
-
-// // ========== HELPER FUNCTIONS ==========
-
-// /**
-//  * Check if a date is an Indian holiday
-//  */
-// function isIndianHoliday(date) {
-//   const fixedHolidays = [
-//     "01-26", // Republic Day
-//     "03-08", // Maha Shivaratri (approx)
-//     "03-25", // Holi (approx)
-//     "04-11", // Eid (approx)
-//     "04-17", // Ram Navami
-//     "04-21", // Mahavir Jayanti
-//     "05-23", // Buddha Purnima
-//     "08-15", // Independence Day
-//     "08-26", // Janmashtami (approx)
-//     "09-16", // Milad un-Nabi (approx)
-//     "10-02", // Gandhi Jayanti
-//     "10-12", // Dussehra (approx)
-//     "10-24", // Diwali (approx)
-//     "10-25", // Govardhan Puja (approx)
-//     "11-01", // Diwali day 2
-//     "12-25", // Christmas
-//   ];
-
-//   const month = String(date.getMonth() + 1).padStart(2, "0");
-//   const day = String(date.getDate()).padStart(2, "0");
-//   const dateStr = `${month}-${day}`;
-
-//   return fixedHolidays.includes(dateStr);
-// }
-
-// /**
-//  * Check if date is a weekend (Friday or Saturday)
-//  */
-// function isWeekend(date) {
-//   const dayOfWeek = date.getDay();
-//   return dayOfWeek === 5 || dayOfWeek === 6; // Friday=5, Saturday=6
-// }
-
-// /**
-//  * Get season multiplier
-//  */
-// function getSeasonalFactor(date) {
-//   const month = date.getMonth(); // 0-11
-
-//   // Dec, Jan, Feb = Peak season
-//   if ([11, 0, 1].includes(month)) {
-//     return 1.15; // +15%
-//   }
-
-//   // May, Jun = Low season
-//   if ([4, 5].includes(month)) {
-//     return 0.85; // -15%
-//   }
-
-//   // Other months = normal
-//   return 1.0;
-// }
-
-// /**
-//  * Get days until booking date
-//  */
-// function getDaysUntil(bookingDate) {
-//   const today = new Date();
-//   today.setHours(0, 0, 0, 0);
-
-//   const checkInDate = new Date(bookingDate);
-//   checkInDate.setHours(0, 0, 0, 0);
-
-//   const timeDiff = checkInDate - today;
-//   const daysUntil = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-//   return daysUntil;
-// }
-
-// /**
-//  * Get current occupancy rate for hotel
-//  */
-// async function getOccupancyRate(db, hotelId) {
-//   try {
-//     const result = await db.query(
-//       `SELECT 
-//         COUNT(*) as total_rooms,
-//         SUM(CASE WHEN available_rooms < total_rooms THEN 1 ELSE 0 END) as occupied_rooms
-//        FROM rooms
-//        WHERE hotel_id = $1`,
-//       [hotelId]
-//     );
-
-//     if (result.rows.length === 0) return 0.5;
-
-//     const { total_rooms, occupied_rooms } = result.rows[0];
-//     const occupancy = (occupied_rooms / total_rooms) * 100;
-
-//     return occupancy || 50; // Default 50% if no data
-//   } catch (err) {
-//     console.error("Error calculating occupancy:", err);
-//     return 50; // Default fallback
-//   }
-// }
-
-// /**
-//  * Get base price for a room type
-//  */
-// async function getBasePrice(db, hotelId, roomId) {
-//   try {
-//     const result = await db.query(
-//       `SELECT price_per_night FROM rooms WHERE room_id = $1 AND hotel_id = $2`,
-//       [roomId, hotelId]
-//     );
-
-//     if (result.rows.length === 0) return 5000; // Default fallback
-
-//     return result.rows[0].price_per_night;
-//   } catch (err) {
-//     console.error("Error getting base price:", err);
-//     return 5000;
-//   }
-// }
-
-// // ========== MAIN PRICING FUNCTION ==========
-
-// /**
-//  * Calculate optimal price for a room on a specific date
-//  * 
-//  * @param {number} hotelId - Hotel ID
-//  * @param {number} roomId - Room ID
-//  * @param {Date} bookingDate - Check-in date
-//  * @param {object} db - Database connection
-//  * @returns {object} - Pricing recommendation with details
-//  */
-// export async function calculateOptimalPrice(db, hotelId, roomId, bookingDate) {
-//   try {
-//     console.log(
-//       `\n📊 Calculating price for Room ${roomId}, Date ${bookingDate.toISOString().split('T')[0]}`
-//     );
-
-//     // ========== STEP 1: Get base price ==========
-//     const basePrice = await getBasePrice(db, hotelId, roomId);
-//     console.log(`   Base Price: ₹${basePrice}`);
-
-//     // ========== STEP 2: Calculate factors ==========
-//     const occupancyRate = await getOccupancyRate(db, hotelId);
-//     const daysUntil = getDaysUntil(bookingDate);
-//     const isHoliday = isIndianHoliday(bookingDate);
-//     const weekend = isWeekend(bookingDate);
-//     const seasonalFactor = getSeasonalFactor(bookingDate);
-
-//     console.log(`   Occupancy: ${occupancyRate.toFixed(1)}%`);
-//     console.log(`   Days Until: ${daysUntil}`);
-//     console.log(`   Weekend: ${weekend}`);
-//     console.log(`   Holiday: ${isHoliday}`);
-//     console.log(`   Season Factor: ${seasonalFactor}`);
-
-//     // ========== STEP 3: Calculate multipliers ==========
-//     let multiplier = 1.0;
-//     let reasons = [];
-
-//     // OCCUPANCY-BASED MULTIPLIER
-//     if (occupancyRate >= 90) {
-//       multiplier *= 1.4;
-//       reasons.push("Very high occupancy (90%+) → +40%");
-//     } else if (occupancyRate >= 80) {
-//       multiplier *= 1.25;
-//       reasons.push("High occupancy (80-90%) → +25%");
-//     } else if (occupancyRate >= 70) {
-//       multiplier *= 1.1;
-//       reasons.push("Good occupancy (70-80%) → +10%");
-//     } else if (occupancyRate < 30) {
-//       multiplier *= 0.8;
-//       reasons.push("Low occupancy (<30%) → -20%");
-//     } else if (occupancyRate < 15) {
-//       multiplier *= 0.7;
-//       reasons.push("Very low occupancy (<15%) → -30%");
-//     }
-
-//     // TIMING-BASED MULTIPLIER
-//     if (daysUntil <= 2) {
-//       multiplier *= 1.5;
-//       reasons.push("Last-minute booking (1-2 days) → +50%");
-//     } else if (daysUntil <= 5) {
-//       multiplier *= 1.25;
-//       reasons.push("Short notice (3-5 days) → +25%");
-//     } else if (daysUntil <= 10) {
-//       multiplier *= 1.1;
-//       reasons.push("Advance booking (6-10 days) → +10%");
-//     } else if (daysUntil > 30) {
-//       multiplier *= 0.8;
-//       reasons.push("Early booking (30+ days) → -20%");
-//     }
-
-//     // WEEKEND MULTIPLIER
-//     if (weekend) {
-//       multiplier *= 1.2;
-//       reasons.push("Weekend premium → +20%");
-//     }
-
-//     // HOLIDAY MULTIPLIER
-//     if (isHoliday) {
-//       multiplier *= 1.3;
-//       reasons.push("Holiday surcharge → +30%");
-//     }
-
-//     // SEASONAL MULTIPLIER
-//     if (seasonalFactor !== 1.0) {
-//       multiplier *= seasonalFactor;
-//       reasons.push(
-//         seasonalFactor > 1
-//           ? "Peak season → +15%"
-//           : "Off-season → -15%"
-//       );
-//     }
-
-//     // ========== STEP 4: Calculate final price ==========
-//     let calculatedPrice = basePrice * multiplier;
-
-//     // Apply bounds: never below 70% or above 150% of base price
-//     const minPrice = basePrice * 0.7;
-//     const maxPrice = basePrice * 1.5;
-
-//     if (calculatedPrice < minPrice) {
-//       calculatedPrice = minPrice;
-//       reasons.push("Capped at minimum (70% of base)");
-//     } else if (calculatedPrice > maxPrice) {
-//       calculatedPrice = maxPrice;
-//       reasons.push("Capped at maximum (150% of base)");
-//     }
-
-//     console.log(`   Final Multiplier: ${multiplier.toFixed(2)}`);
-//     console.log(`   Calculated Price: ₹${calculatedPrice.toFixed(2)}`);
-
-//     // ========== STEP 5: Store in history ==========
-//     await db.query(
-//       `INSERT INTO pricing_history 
-//        (hotel_id, room_id, date_for_booking, base_price, calculated_price, 
-//         occupancy_rate, days_until, is_weekend, is_holiday, season, multiplier, reason)
-//        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-//       [
-//         hotelId,
-//         roomId,
-//         bookingDate.toISOString().split("T")[0],
-//         basePrice,
-//         calculatedPrice,
-//         occupancyRate,
-//         daysUntil,
-//         weekend,
-//         isHoliday,
-//         seasonalFactor > 1 ? "peak" : seasonalFactor < 1 ? "low" : "normal",
-//         multiplier,
-//         reasons.join(" | "),
-//       ]
-//     );
-
-//     // ========== STEP 6: Return result ==========
-//     return {
-//       base_price: basePrice,
-//       calculated_price: Math.round(calculatedPrice),
-//       multiplier: multiplier.toFixed(2),
-//       factors: {
-//         occupancy_rate: occupancyRate.toFixed(1),
-//         days_until: daysUntil,
-//         is_weekend: weekend,
-//         is_holiday: isHoliday,
-//         season: seasonalFactor > 1 ? "peak" : seasonalFactor < 1 ? "low" : "normal",
-//       },
-//       reasons: reasons,
-//       price_increase: Math.round(calculatedPrice - basePrice),
-//       price_increase_percent: ((multiplier - 1) * 100).toFixed(1),
-//     };
-//   } catch (err) {
-//     console.error("Error in calculateOptimalPrice:", err);
-//     throw err;
-//   }
-// }
-
-// /**
-//  * Get pricing recommendations for all rooms of a hotel
-//  */
-// export async function getPricingRecommendations(db, hotelId, daysAhead = 7) {
-//   try {
-//     const recommendations = [];
-
-//     // Get all rooms for this hotel
-//     const roomsResult = await db.query(
-//       `SELECT room_id, room_type, price_per_night FROM rooms WHERE hotel_id = $1`,
-//       [hotelId]
-//     );
-
-//     // For each room, calculate pricing for next N days
-//     for (const room of roomsResult.rows) {
-//       const today = new Date();
-
-//       for (let i = 0; i < daysAhead; i++) {
-//         const futureDate = new Date(today);
-//         futureDate.setDate(futureDate.getDate() + i);
-
-//         const pricing = await calculateOptimalPrice(
-//           db,
-//           hotelId,
-//           room.room_id,
-//           futureDate
-//         );
-
-//         recommendations.push({
-//           room_id: room.room_id,
-//           room_type: room.room_type,
-//           date: futureDate.toISOString().split("T")[0],
-//           ...pricing,
-//         });
-//       }
-//     }
-
-//     return recommendations;
-//   } catch (err) {
-//     console.error("Error in getPricingRecommendations:", err);
-//     throw err;
-//   }
-// }
-
-// /**
-//  * Apply a recommended price (hotel owner accepts the recommendation)
-//  */
-// export async function applyRecommendedPrice(db, hotelId, roomId, newPrice) {
-//   try {
-//     // Update room's base price
-//     const result = await db.query(
-//       `UPDATE rooms 
-//        SET price_per_night = $1 
-//        WHERE room_id = $2 AND hotel_id = $3
-//        RETURNING room_id, room_type, price_per_night`,
-//       [newPrice, roomId, hotelId]
-//     );
-
-//     if (result.rows.length === 0) {
-//       throw new Error("Room not found");
-//     }
-
-//     console.log(
-//       `✅ Price updated for room ${result.rows[0].room_type}: ₹${newPrice}`
-//     );
-
-//     return result.rows[0];
-//   } catch (err) {
-//     console.error("Error applying price:", err);
-//     throw err;
-//   }
-// }
 
 import dotenv from "dotenv";
 
@@ -550,6 +199,39 @@ export async function calculateOptimalPrice(db, hotelId, roomId, bookingDate) {
   }
 }
 
+// export async function getPricingRecommendations(db, hotelId, daysAhead = 7) {
+//   try {
+//     const recommendations = [];
+//     const roomsResult = await db.query(
+//       `SELECT room_id, room_type FROM rooms WHERE hotel_id = $1`,
+//       [hotelId]
+//     );
+
+//     for (const room of roomsResult.rows) {
+//       const today = new Date();
+//       for (let i = 0; i < daysAhead; i++) {
+//         const futureDate = new Date(today);
+//         futureDate.setDate(futureDate.getDate() + i);
+
+//         const pricing = await calculateOptimalPrice(db, hotelId, room.room_id, futureDate);
+
+//         // Only push if there is actually a reason to change the price!
+//         if (pricing.calculated_price !== pricing.base_price) {
+//             recommendations.push({
+//             room_id: room.room_id,
+//             room_type: room.room_type,
+//             date: futureDate.toISOString().split("T")[0],
+//             ...pricing,
+//             });
+//         }
+//       }
+//     }
+//     return recommendations;
+//   } catch (err) {
+//     console.error("Error in getPricingRecommendations:", err);
+//     throw err;
+//   }
+// }
 export async function getPricingRecommendations(db, hotelId, daysAhead = 7) {
   try {
     const recommendations = [];
@@ -566,13 +248,14 @@ export async function getPricingRecommendations(db, hotelId, daysAhead = 7) {
 
         const pricing = await calculateOptimalPrice(db, hotelId, room.room_id, futureDate);
 
-        // Only push if there is actually a reason to change the price!
+        // Only push if the AI actually recommends a change!
         if (pricing.calculated_price !== pricing.base_price) {
             recommendations.push({
-            room_id: room.room_id,
-            room_type: room.room_type,
-            date: futureDate.toISOString().split("T")[0],
-            ...pricing,
+              room_id: room.room_id,
+              room_type: room.room_type,
+              target_date: futureDate.toISOString().split("T")[0], // FIXED: Matches frontend
+              recommended_price: pricing.calculated_price,         // FIXED: Matches frontend
+              ...pricing,
             });
         }
       }
@@ -584,26 +267,6 @@ export async function getPricingRecommendations(db, hotelId, daysAhead = 7) {
   }
 }
 
-// export async function applyRecommendedPrice(db, hotelId, roomId, newPrice) {
-//   try {
-//     const result = await db.query(
-//       `UPDATE rooms 
-//        SET price_per_night = $1 
-//        WHERE room_id = $2 AND hotel_id = $3
-//        RETURNING room_id, room_type, price_per_night`,
-//       [newPrice, roomId, hotelId]
-//     );
-
-//     if (result.rows.length === 0) throw new Error("Room not found");
-//     return result.rows[0];
-//   } catch (err) {
-//     console.error("Error applying price:", err);
-//     throw err;
-//   }
-// }
-/**
- * Apply a recommended price safely using the override table
- */
 export async function applyRecommendedPrice(db, hotelId, roomId, targetDate, newPrice) {
   try {
     // We use an UPSERT. If a price override already exists for this room/date, update it.
