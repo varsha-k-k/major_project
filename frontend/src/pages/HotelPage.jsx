@@ -9,7 +9,8 @@ function HotelPage() {
   const [hotel, setHotel] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
-
+  // NEW: The Memory Bucket
+  const [chatState, setChatState] = useState({});
   // 1. Date Selection State
   const [checkIn, setCheckIn] = useState(new Date().toISOString().split("T")[0]);
   const [checkOut, setCheckOut] = useState("");
@@ -124,6 +125,8 @@ const processRealBooking = async () => {
         check_in: checkIn,
         check_out: checkOut,
         number_of_rooms: bookingDetails.numRooms,
+        adults: bookingDetails.adults,
+        children: bookingDetails.children
       });
       
       // FIX: Cleaned up the broken alert string
@@ -161,7 +164,26 @@ const processRealBooking = async () => {
       processRealBooking();
     }, 2500); 
   };
-  const handleSendMessage = async () => {
+  // const handleSendMessage = async () => {
+  //   if (!chatInput.trim()) return;
+    
+  //   const newHistory = [...chatHistory, { sender: "user", text: chatInput }];
+  //   setChatHistory(newHistory);
+  //   setChatInput("");
+
+  //   try {
+  //     const res = await axios.post("http://localhost:3000/api/guest/query", {
+  //       hotel_id: hotel.hotel_id,
+  //       query_text: chatInput,
+  //       history: newHistory
+  //     });
+
+  //     setChatHistory([...newHistory, { sender: "ai", text: res.data.reply }]);
+  //   } catch (err) {
+  //     setChatHistory([...newHistory, { sender: "ai", text: "Sorry, I am having trouble connecting to the front desk right now." }]);
+  //   }
+  // };
+const handleSendMessage = async () => {
     if (!chatInput.trim()) return;
     
     const newHistory = [...chatHistory, { sender: "user", text: chatInput }];
@@ -169,18 +191,49 @@ const processRealBooking = async () => {
     setChatInput("");
 
     try {
+      // Send the query AND the memory state to the backend
       const res = await axios.post("http://localhost:3000/api/guest/query", {
         hotel_id: hotel.hotel_id,
         query_text: chatInput,
-        history: newHistory
+        check_in: checkIn,
+        check_out: checkOut,
+        chatState: chatState // Pass memory
       });
 
+      // Save the updated memory state!
+      setChatState(res.data.chatState);
+
+      // Add the AI's response to the chat window
       setChatHistory([...newHistory, { sender: "ai", text: res.data.reply }]);
+
+      // THE MAGIC HANDOFF:
+    // THE MAGIC HANDOFF:
+      if (res.data.intent === "TRIGGER_CHECKOUT") {
+        // 1. Auto-fill the background booking form with the AI's collected data
+        setBookingDetails({
+          guestName: res.data.chatState.guest_name,
+          guestPhone: res.data.chatState.guest_phone,
+          // Map the new slots! Default to 1 room, 2 adults, 0 children if somehow missed
+          numRooms: res.data.chatState.num_rooms || 1, 
+          adults: res.data.chatState.adults || 2, 
+          children: res.data.chatState.children || 0
+        });
+        setSelectedRoomId(res.data.chatState.room_id);
+
+        // 🚨 FIX: WIPE THE MEMORY BUCKET CLEAN SO IT FORGETS THIS BOOKING!
+        setChatState({});
+
+        // 2. Wait 2 seconds so they can read the final message, then pop the payment!
+        setTimeout(() => {
+          setIsChatOpen(false); // Close the chat window
+          setShowPayment(true); // POP THE PAYMENT MODAL!
+        }, 2000);
+      }
+
     } catch (err) {
       setChatHistory([...newHistory, { sender: "ai", text: "Sorry, I am having trouble connecting to the front desk right now." }]);
     }
   };
-
   if (loading || !hotel) return <div style={{ padding: "50px", textAlign: "center" }}>Loading property details...</div>;
 
   return (
