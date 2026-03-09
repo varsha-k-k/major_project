@@ -1,11 +1,14 @@
 
 import { useEffect, useState, useMemo } from "react";
+import toast, { Toaster } from "react-hot-toast";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { 
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, 
   Tooltip, ResponsiveContainer 
 } from 'recharts';
+// 🚨 NEW FRONTEND IMPORTS
+import { io } from "socket.io-client";
 
 function StaffDashboard() {
   const navigate = useNavigate();
@@ -30,6 +33,43 @@ function StaffDashboard() {
       fetchPricingRecommendations();
     }
   }, [activeTab, period]);
+useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+
+    // Connect to the backend socket
+    const socket = io("http://localhost:3000");
+
+    // Extract the hotel_id from the JWT token so we know which room to join
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      socket.emit("join_hotel_room", payload.hotel_id);
+    } catch (e) {
+      console.error("Invalid token format");
+    }
+
+    // LISTEN for the booking event from the server
+    socket.on("new_booking_alert", (data) => {
+      // 1. Play a notification sound! (Optional, but awesome for presentations)
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance("New booking received."));
+      
+      // 2. Show a beautiful toast popup
+  toast.success(
+        <div>
+          <strong>🛎️ New Booking Alert!</strong><br/>
+          {data.guest_name} booked the <strong>{data.room_type}</strong> room for {data.nights} night(s).<br/>
+          <span style={{fontSize: "12px", color: "gray"}}>Ref: {data.ref}</span>
+        </div>, 
+        { duration: 8000, position: 'top-right' }
+      );
+
+      // 3. MAGIC: Instantly re-fetch the analytics so the revenue charts jump up live!
+      fetchAnalytics(); 
+    });
+
+    // Cleanup on unmount
+    return () => socket.disconnect();
+  }, []); // Only runs once on mount
 
   const fetchAnalytics = async () => {
     setLoading(true);
@@ -99,11 +139,13 @@ function StaffDashboard() {
     return filledData;
   }, [analytics?.revenue_trend, period]);
 
-  if (loading && activeTab === "analytics") return <div style={{ padding: "40px" }}>Loading Dashboard...</div>;
+// Fix: Only show full-screen loading if we don't have analytics data yet!
+  if (loading && !analytics && activeTab === "analytics") return <div style={{ padding: "40px" }}>Loading Dashboard...</div>;
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", backgroundColor: "#f3f4f6", minHeight: "100vh" }}>
-      
+      {/* 🚨 THIS IS THE MAGIC CONTAINER THAT SHOWS THE POPUPS! */}
+      <Toaster position="top-right" reverseOrder={false} />
       {/* --- TOP NAVIGATION BAR --- */}
       <header style={{ backgroundColor: "#1f2937", color: "white", padding: "16px 40px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>

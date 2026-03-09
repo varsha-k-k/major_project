@@ -7,6 +7,11 @@ import jwt from "jsonwebtoken";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+
+// 🚨 NEW WEBSOCKET IMPORTS
+import { createServer } from "http";
+import { Server } from "socket.io";
+
 import { verifyToken } from "./middleware/auth.js";
 import { processGuestQuery } from "./services/aiService.js";
 import { 
@@ -15,7 +20,7 @@ import {
   applyRecommendedPrice 
 } from "./services/pricingEngine.js";
 
-import { getComprehensiveAnalytics } from "./services/analyticsService.js";
+// import { getComprehensiveAnalytics } from "./services/analyticsService.js";
 
 
 const app = express();
@@ -23,6 +28,33 @@ const port = 3000;
 
 dotenv.config();
 
+
+// 🚨 WRAP EXPRESS WITH HTTP & SOCKET.IO
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: 'http://localhost:5173',
+    credentials: true
+  }
+});
+
+// 🚨 WEBSOCKET LISTENER LOGIC
+io.on("connection", (socket) => {
+  console.log("🟢 Live Dashboard Connected:", socket.id);
+
+  // When a hotel owner logs in, they join a private "room" just for their hotel
+  socket.on("join_hotel_room", (hotelId) => {
+    socket.join(`hotel_${hotelId}`);
+    console.log(`🔒 Dashboard subscribed to live updates for Hotel ID: ${hotelId}`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("🔴 Live Dashboard Disconnected");
+  });
+});
+
+// Make 'io' available inside all our API routes!
+app.set("io", io);
 const db = new pg.Client({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -86,91 +118,6 @@ app.get("/", (req, res) => {
 });
 
 
-// app.post("/api/bookings", async (req, res) => {
-//   const {
-//     hotel_id,
-//     room_id,
-//     guest_name,
-//     guest_phone,
-//     check_in,
-//     check_out,
-//     number_of_rooms = 1
-//   } = req.body;
-
-//   if (!check_in || !check_out) {
-//     return res.status(400).json({ message: "Check-in and check-out dates are required." });
-//   }
-
-//   try {
-//     await db.query("BEGIN"); // Start transaction
-
-
-//     const roomCheck = await db.query(
-//       "SELECT total_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2 FOR UPDATE",
-//       [room_id, hotel_id]
-//     );
-
-//     if (roomCheck.rows.length === 0) {
-//       await db.query("ROLLBACK");
-//       return res.status(404).json({ message: "Room not found" });
-//     }
-
-//     const totalRooms = roomCheck.rows[0].total_rooms;
-
-//     // ==========================================
-//     // STEP 2: CALCULATE OVERLAPPING DATES 
-//     // ==========================================
-//     // Removed FOR UPDATE from here. It's safe to run because we already locked the room.
-//     const overlapCheck = await db.query(
-//       `SELECT SUM(number_of_rooms) as booked_count 
-//        FROM bookings 
-//        WHERE room_id = $1 
-//          AND booking_status = 'confirmed'
-//          AND check_in_date < $3 
-//          AND check_out_date > $2`,
-//       [room_id, check_in, check_out]
-//     );
-
-//     const currentlyBooked = parseInt(overlapCheck.rows[0].booked_count) || 0;
-    
-//     // ==========================================
-//     // STEP 3: ENFORCE CAPACITY
-//     // ==========================================
-//     const actualAvailable = totalRooms - currentlyBooked;
-
-//     if (actualAvailable <= 0) {
-//       await db.query("ROLLBACK");
-//       return res.status(400).json({ message: "No rooms available for these dates." });
-//     }
-
-//     if (number_of_rooms > actualAvailable) {
-//       await db.query("ROLLBACK");
-//       return res.status(400).json({ message: `Only ${actualAvailable} room(s) available for these dates.` });
-//     }
-
-//     // ==========================================
-//     // STEP 4: INSERT BOOKING
-//     // ==========================================
-//     await db.query(
-//       `INSERT INTO bookings
-//        (hotel_id, room_id, guest_name, guest_phone, check_in_date, check_out_date, number_of_rooms, booking_status)
-//        VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed')`,
-//       [hotel_id, room_id, guest_name, guest_phone, check_in, check_out, number_of_rooms]
-//     );
-
-//     await db.query("COMMIT"); // Release the lock and save!
-
-//     res.json({ message: "Booking confirmed successfully!" });
-
-//   } catch (err) {
-//     await db.query("ROLLBACK"); // Release the lock and undo on error
-//     console.error("Booking Error:", err);
-//     res.status(500).json({ message: "Server error during booking" });
-//   }
-// });
-// GUEST BOOKING LOOKUP
-
-
 
 app.post("/api/bookings", async (req, res) => {
   const { hotel_id, room_id, guest_name, guest_phone, check_in, check_out, number_of_rooms = 1,adults = 2,children = 0 } = req.body;
@@ -182,8 +129,8 @@ app.post("/api/bookings", async (req, res) => {
   try {
     await db.query("BEGIN"); // Start transaction
 
-    const roomCheck = await db.query(
-      "SELECT total_rooms FROM rooms WHERE room_id = $1 AND hotel_id = $2 FOR UPDATE",
+const roomCheck = await db.query(
+      "SELECT total_rooms, room_type FROM rooms WHERE room_id = $1 AND hotel_id = $2 FOR UPDATE",
       [room_id, hotel_id]
     );
 
@@ -223,7 +170,20 @@ app.post("/api/bookings", async (req, res) => {
     );
 
     await db.query("COMMIT");
+    const io = req.app.get("io");
+  
+    // Calculate nights
+    const checkInDate = new Date(check_in);
+    const checkOutDate = new Date(check_out);
+    const nights = Math.ceil((checkOutDate - checkInDate) / (1000 * 60 * 60 * 24));
 
+    // 🚨 UPDATED: PUSH THE DETAILED REAL-TIME ALERT!
+    io.to(`hotel_${hotel_id}`).emit("new_booking_alert", {
+      guest_name: guest_name,
+      room_type: roomCheck.rows[0].room_type, // Get name from step 1
+      nights: nights,
+      ref: bookingResult.rows[0].booking_ref
+    });
     // Send the reference back to React
     res.json({ 
       message: "Booking confirmed successfully!",
@@ -1371,6 +1331,6 @@ app.get("/api/pricing/history", verifyToken, async (req, res) => {
 });
 
 
-app.listen(port, () => {
+httpServer.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
