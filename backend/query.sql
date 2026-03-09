@@ -64,3 +64,86 @@ CREATE TABLE analytics_summary (
     FOREIGN KEY (hotel_id) REFERENCES hotels(hotel_id) ON DELETE CASCADE
 );
 
+-- Add pictures table
+CREATE TABLE room_pictures (
+  picture_id SERIAL PRIMARY KEY,
+  room_id INT NOT NULL,
+  picture_url VARCHAR(500),
+  caption VARCHAR(255),
+  display_order INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (room_id) REFERENCES rooms(room_id)
+);
+
+-- Add amenities table
+CREATE TABLE room_amenities (
+  amenity_id SERIAL PRIMARY KEY,
+  room_id INT NOT NULL,
+  amenity_name VARCHAR(100),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (room_id) REFERENCES rooms(room_id)
+);
+
+-- Add hotel pictures table
+CREATE TABLE hotel_pictures (
+  picture_id SERIAL PRIMARY KEY,
+  hotel_id INT NOT NULL,
+  picture_url VARCHAR(500),
+  picture_type VARCHAR(50), -- 'lobby', 'entrance', 'room', etc
+  caption VARCHAR(255),
+  display_order INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (hotel_id) REFERENCES hotels(hotel_id)
+);
+
+-- Add hotel amenities table
+CREATE TABLE hotel_amenities (
+  amenity_id SERIAL PRIMARY KEY,
+  hotel_id INT NOT NULL,
+  amenity_name VARCHAR(100), -- 'Pool', 'WiFi', 'Parking', etc
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (hotel_id) REFERENCES hotels(hotel_id)
+);
+
+-- Add description fields to existing tables
+ALTER TABLE rooms ADD COLUMN description TEXT;
+ALTER TABLE rooms ADD COLUMN capacity INT DEFAULT 2;
+ALTER TABLE hotels ADD COLUMN description TEXT;
+
+
+-- Add indexes
+CREATE INDEX idx_hotel_is_complete ON hotels(is_complete);
+CREATE INDEX idx_room_pictures_room_id ON room_pictures(room_id);
+
+-- Table to store the active surges that bypass the base price
+CREATE TABLE IF NOT EXISTS room_price_overrides (
+    override_id SERIAL PRIMARY KEY,
+    hotel_id INT REFERENCES hotels(hotel_id),
+    room_id INT REFERENCES rooms(room_id),
+    target_date DATE NOT NULL,
+    custom_price NUMERIC(10, 2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(room_id, target_date) -- Prevents multiple overrides for the same room/day
+);
+
+-- Table to log the AI's mathematical decisions for future ML training
+CREATE TABLE IF NOT EXISTS pricing_history (
+    history_id SERIAL PRIMARY KEY,
+    hotel_id INT REFERENCES hotels(hotel_id),
+    room_id INT REFERENCES rooms(room_id),
+    date_for_booking DATE NOT NULL,
+    base_price NUMERIC(10, 2),
+    calculated_price NUMERIC(10, 2),
+    occupancy_rate NUMERIC(5, 2),
+    days_until INT,
+    is_weekend BOOLEAN,
+    is_holiday BOOLEAN,
+    season VARCHAR(20),
+    multiplier NUMERIC(5, 2),
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE bookings 
+ADD COLUMN payment_status VARCHAR(50) DEFAULT 'pending',
+ADD COLUMN transaction_id VARCHAR(100),
+ADD COLUMN booking_ref VARCHAR(20) UNIQUE;
