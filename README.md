@@ -109,21 +109,10 @@ Final Price = Base Price ×
 ### Dashboard
 - WebSocket events for real-time updates
 
-## Features Roadmap
-
-- [ ] A/B testing framework for validating pricing effectiveness
-- [ ] Competitor price monitoring integration
-- [ ] Revenue analytics dashboard
-- [ ] Multi-property management
-- [ ] PMS system integrations
-- [ ] Advanced ML predictions
-
 ## Known Limitations
 
-- Single property support (MVP)
 - No automated testing (manual validation only)
 - Rule-based AI (not fully ML-powered)
-- Limited to direct bookings (OTA integration pending)
 
 ## Future Improvements
 
